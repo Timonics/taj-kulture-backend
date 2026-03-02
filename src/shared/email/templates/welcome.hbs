@@ -1,0 +1,87 @@
+<html>
+  <head>
+    <meta charset='utf-8' />
+    <title>Welcome to Taj Kulture</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        line-height: 1.6;
+        color: #333;
+      }
+      .container {
+        max-width: 600px;
+        margin: 0 auto;
+        padding: 20px;
+      }
+      .header {
+        background: #8b4513;
+        color: white;
+        padding: 20px;
+        text-align: center;
+      }
+      .content {
+        padding: 20px;
+      }
+      .button {
+        display: inline-block;
+        padding: 10px 20px;
+        background: #8b4513;
+        color: white;
+        text-decoration: none;
+        border-radius: 5px;
+        margin: 20px 0;
+      }
+      .features {
+        display: flex;
+        flex-wrap: wrap;
+        margin: 20px 0;
+      }
+      .feature {
+        flex: 1;
+        min-width: 200px;
+        padding: 10px;
+      }
+      .footer {
+        text-align: center;
+        padding: 20px;
+        color: #666;
+        font-size: 12px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class='container'>
+      <div class='header'>
+        <h1>Welcome to Taj Kulture, {{name}}!</h1>
+      </div>
+      <div class='content'>
+        <p>We're thrilled to have you join our community of cultural heritage
+          enthusiasts!</p>
+
+        <p>At Taj Kulture, you'll discover:</p>
+
+        <div class='features'>
+          <div class='feature'>
+            <h3>🪡 Handcrafted Treasures</h3>
+            <p>Authentic pieces from master artisans</p>
+          </div>
+          <div class='feature'>
+            <h3>📖 Cultural Stories</h3>
+            <p>Every product has a story to tell</p>
+          </div>
+          <div class='feature'>
+            <h3>🤝 Support Artisans</h3>
+            <p>Directly support traditional crafts</p>
+          </div>
+        </div>
+
+        <p style='text-align: center;'>
+          <a href='{{loginUrl}}' class='button'>Start Exploring</a>
+        </p>
+      </div>
+      <div class='footer'>
+        <p>&copy; {{year}} Taj Kulture. All rights reserved.</p>
+      </div>
+    </div>
+  </body>
+</html>
