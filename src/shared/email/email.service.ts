@@ -251,7 +251,7 @@ export class EmailService {
     name: string,
     verificationToken: string,
   ): Promise<void> {
-    const verificationUrl = `${this.configService.get('FRONTEND_URL')}/verify-email?token=${verificationToken}`;
+    const verificationUrl = `${this.configService.get('FRONTEND_URL')}/auth/verify-email?token=${verificationToken}`;
 
     // Try SendGrid template first
     const templateId = this.configService.get(

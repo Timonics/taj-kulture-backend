@@ -46,6 +46,9 @@ class EnvironmentVariables {
 
   //Redis
   @IsString()
+  REDIS_ENABLED: string;
+
+  @IsString()
   REDIS_HOST: string;
 
   @IsNumber()

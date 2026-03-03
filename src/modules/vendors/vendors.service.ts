@@ -4,6 +4,7 @@ import {
   ConflictException,
   BadRequestException,
   ForbiddenException,
+  Inject,
 } from '@nestjs/common';
 import { PrismaService } from '../../shared/database/prisma.service';
 import { ApplyVendorDto } from './dto/apply-vendor.dto';
@@ -12,10 +13,15 @@ import { AdminUpdateVendorDto } from './dto/admin-update-vendor.dto';
 import { slugify } from '../../shared/utils/slugify';
 import { User, VerificationStatus } from 'generated/prisma/client';
 import { instanceToPlain } from 'class-transformer';
+import { ICacheService } from 'src/shared/cache/cache.interface';
+import { CACHE_KEYS } from 'src/core/constants/app.constants';
 
 @Injectable()
 export class VendorsService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    @Inject('CACHE_SERVICE') private cache: ICacheService,
+  ) {}
 
   async apply(user: User, applyVendorDto: ApplyVendorDto) {
     // Check if user already has a vendor profile
@@ -91,89 +97,113 @@ export class VendorsService {
     // Optionally emit event: vendor.applied
     // await this.eventBus.emit(VENDOR_EVENTS.APPLIED, { vendorId: vendor.id, userId: user.id });
 
+    await this.cache.deleteByTag(CACHE_KEYS.VENDORS());
+
     return vendor;
   }
 
   async findAll(query: any) {
-    const {
-      page = 1,
-      limit = 20,
-      isVerified,
-      isFeatured,
-      categoryId,
-      search,
-      sortBy = 'rating',
-      sortOrder = 'desc',
-    } = query;
+    const cacheKey = CACHE_KEYS.VENDORS(query);
 
-    const where: any = {};
+    return this.cache.getOrSet(
+      cacheKey,
+      async () => {
+        const {
+          page = 1,
+          limit = 20,
+          isVerified,
+          isFeatured,
+          categoryId,
+          search,
+          sortBy = 'rating',
+          sortOrder = 'desc',
+        } = query;
 
-    if (isVerified !== undefined) where.isVerified = isVerified === 'true';
-    if (isFeatured !== undefined) where.isFeatured = isFeatured === 'true';
-    if (categoryId) {
-      where.categories = {
-        some: { categoryId },
-      };
-    }
-    if (search) {
-      where.OR = [
-        { name: { contains: search, mode: 'insensitive' } },
-        { description: { contains: search, mode: 'insensitive' } },
-      ];
-    }
+        const where: any = {};
 
-    const [vendors, total] = await Promise.all([
-      this.prisma.vendor.findMany({
-        where,
-        include: {
-          user: { select: { id: true, username: true, avatar: true } },
-          categories: { include: { category: true } },
-          badges: true,
-          _count: {
-            select: { products: true, followers: true, reviews: true },
-          },
-        },
-        orderBy: { [sortBy]: sortOrder },
-        skip: (page - 1) * limit,
-        take: +limit,
-      }),
-      this.prisma.vendor.count({ where }),
-    ]);
+        if (isVerified !== undefined) where.isVerified = isVerified === 'true';
+        if (isFeatured !== undefined) where.isFeatured = isFeatured === 'true';
+        if (categoryId) {
+          where.categories = {
+            some: { categoryId },
+          };
+        }
+        if (search) {
+          where.OR = [
+            { name: { contains: search, mode: 'insensitive' } },
+            { description: { contains: search, mode: 'insensitive' } },
+          ];
+        }
 
-    return {
-      data: vendors,
-      meta: { total, page, limit, pages: Math.ceil(total / limit) },
-    };
+        const [vendors, total] = await Promise.all([
+          this.prisma.vendor.findMany({
+            where,
+            include: {
+              user: { select: { id: true, username: true, avatar: true } },
+              categories: { include: { category: true } },
+              badges: true,
+              _count: {
+                select: { products: true, followers: true, reviews: true },
+              },
+            },
+            orderBy: { [sortBy]: sortOrder },
+            skip: (page - 1) * limit,
+            take: +limit,
+          }),
+          this.prisma.vendor.count({ where }),
+        ]);
+
+        return {
+          data: vendors,
+          meta: { total, page, limit, pages: Math.ceil(total / limit) },
+        };
+      },
+      {
+        ttl: 300,
+        tags: [CACHE_KEYS.VENDORS(query), CACHE_KEYS.VENDORS()],
+      },
+    );
   }
 
   async findOne(slug: string) {
-    const vendor = await this.prisma.vendor.findUnique({
-      where: { slug },
-      include: {
-        user: { select: { id: true, username: true, avatar: true } },
-        categories: { include: { category: true } },
-        badges: true,
-        products: {
-          where: { status: 'PUBLISHED', isPublished: true },
-          take: 8,
-          orderBy: { createdAt: 'desc' },
+    const cacheKey = CACHE_KEYS.VENDOR(slug);
+
+    return this.cache.getOrSet(
+      cacheKey,
+      async () => {
+        const vendor = await this.prisma.vendor.findUnique({
+          where: { slug },
           include: {
-            images: { where: { isPrimary: true }, take: 1 },
+            user: { select: { id: true, username: true, avatar: true } },
+            categories: { include: { category: true } },
+            badges: true,
+            products: {
+              where: { status: 'PUBLISHED', isPublished: true },
+              take: 8,
+              orderBy: { createdAt: 'desc' },
+              include: {
+                images: { where: { isPrimary: true }, take: 1 },
+              },
+            },
+            reviews: {
+              take: 5,
+              orderBy: { createdAt: 'desc' },
+              include: { user: { select: { username: true, avatar: true } } },
+            },
           },
-        },
-        reviews: {
-          take: 5,
-          orderBy: { createdAt: 'desc' },
-          include: { user: { select: { username: true, avatar: true } } },
-        },
+        });
+
+        if (!vendor) {
+          throw new NotFoundException('Vendor not found');
+        }
+
+        return vendor;
       },
-    });
-
-    if (!vendor) {
-      throw new NotFoundException('Vendor not found');
-    }
-
-    return vendor;
+      {
+        ttl: 600, // 10 minutes
+        tags: [CACHE_KEYS.VENDORS(), CACHE_KEYS.VENDOR(slug)],
+      },
+    );
   }
 
   async findMyVendor(userId: string) {
@@ -256,6 +286,13 @@ export class VendorsService {
         },
       });
 
+      await Promise.all([
+        this.cache.delete(CACHE_KEYS.VENDOR(vendor.slug)),
+        this.cache.delete(CACHE_KEYS.VENDOR_STATS(vendor.id)),
+        this.cache.delete(CACHE_KEYS.VENDOR_FOLLOWERS(vendor.id)),
+        this.cache.deleteByTag(CACHE_KEYS.VENDORS()),
+      ]);
+
       return updated;
     });
   }
@@ -297,6 +334,13 @@ export class VendorsService {
     if (!vendor) {
       throw new NotFoundException('Vendor not found');
     }
+
+    await Promise.all([
+      this.cache.delete(CACHE_KEYS.VENDOR(vendor.slug)),
+      this.cache.delete(CACHE_KEYS.VENDOR_STATS(vendor.id)),
+      this.cache.delete(CACHE_KEYS.VENDOR_FOLLOWERS(vendor.id)),
+      this.cache.deleteByTag(CACHE_KEYS.VENDORS()),
+    ]);
 
     // Consider: should we also delete related data? Cascade is set in schema.
     return this.prisma.vendor.delete({ where: { id } });
@@ -360,29 +404,43 @@ export class VendorsService {
 
   // Get followers list
   async getFollowers(vendorId: string, page = 1, limit = 20) {
-    const vendor = await this.prisma.vendor.findUnique({
-      where: { id: vendorId },
-    });
-    if (!vendor) {
-      throw new NotFoundException('Vendor not found');
-    }
+    const cacheKey = CACHE_KEYS.VENDOR_FOLLOWERS(vendorId);
 
-    const [followers, total] = await Promise.all([
-      this.prisma.vendorFollow.findMany({
-        where: { vendorId },
-        include: {
-          user: { select: { id: true, username: true, avatar: true } },
-        },
-        skip: (page - 1) * limit,
-        take: limit,
-        orderBy: { createdAt: 'desc' },
-      }),
-      this.prisma.vendorFollow.count({ where: { vendorId } }),
-    ]);
+    return this.cache.getOrSet(
+      cacheKey,
+      async () => {
+        const vendor = await this.prisma.vendor.findUnique({
+          where: { id: vendorId },
+        });
+        if (!vendor) {
+          throw new NotFoundException('Vendor not found');
+        }
 
-    return {
-      data: followers.map((f) => f.user),
-      meta: { total, page, limit, pages: Math.ceil(total / limit) },
-    };
+        const [followers, total] = await Promise.all([
+          this.prisma.vendorFollow.findMany({
+            where: { vendorId },
+            include: {
+              user: { select: { id: true, username: true, avatar: true } },
+            },
+            skip: (page - 1) * limit,
+            take: limit,
+            orderBy: { createdAt: 'desc' },
+          }),
+          this.prisma.vendorFollow.count({ where: { vendorId } }),
+        ]);
+
+        return {
+          data: followers.map((f) => f.user),
+          meta: { total, page, limit, pages: Math.ceil(total / limit) },
+        };
+      },
+      {
+        ttl: 300,
+        tags: [
+          CACHE_KEYS.VENDOR_FOLLOWERS(vendorId),
+          CACHE_KEYS.VENDOR(vendorId),
+        ],
+      },
+    );
   }
 }

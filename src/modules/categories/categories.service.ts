@@ -3,16 +3,22 @@ import {
   NotFoundException,
   ConflictException,
   BadRequestException,
+  Inject,
 } from '@nestjs/common';
 import { PrismaService } from '../../shared/database/prisma.service';
 import { CreateCategoryDto } from './dto/create-category.dto';
 import { UpdateCategoryDto } from './dto/update-category.dto';
 import { slugify } from '../../shared/utils/slugify';
 import { Category } from 'generated/prisma/client';
+import { ICacheService } from 'src/shared/cache/cache.interface';
+import { CACHE_KEYS } from 'src/core/constants/app.constants';
 
 @Injectable()
 export class CategoriesService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    @Inject('CACHE_SERVICE') private cache: ICacheService,
+  ) {}
 
   async create(createCategoryDto: CreateCategoryDto) {
     const {
@@ -89,39 +95,82 @@ export class CategoriesService {
     // If parent exists, update its pathIds? Actually parent's pathIds should already include itself.
     // No need to update parent now because pathIds only contains ancestors, not self.
 
+    await this.cache.deleteByTag(CACHE_KEYS.CATEGORIES());
+
     return newCategory;
   }
 
   async findAll(includeInactive = false) {
-    return this.prisma.category.findMany({
-      where: includeInactive ? {} : { isActive: true },
-      include: {
-        parent: true,
-        children: true,
+    const cacheKey = CACHE_KEYS.ALL_CATEGORIES(includeInactive);
+
+    return this.cache.getOrSet(
+      cacheKey,
+      async () => {
+        return this.prisma.category.findMany({
+          where: includeInactive ? {} : { isActive: true },
+          include: { parent: true, children: true },
+          orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+        });
       },
-      orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
-    });
+      {
+        ttl: 3600,
+        tags: [CACHE_KEYS.CATEGORIES()],
+      },
+    );
   }
 
+  // async getTree(includeInactive = false) {
+  //   const cacheKey = CACHE_KEYS.CATEGORIES_TREE;
+
+  //   return this.cache.getOrSet(
+  //     cacheKey,
+  //     async () => {
+  //       const all = await this.prisma.category.findMany({
+  //         where: includeInactive ? {} : { isActive: true },
+  //         include: { children: true },
+  //         orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+  //       });
+
+  //       // Build tree logic...
+  //       return this.buildTree(all);
+  //     },
+  //     {
+  //       ttl: 3600,
+  //       tags: ['categories', 'categories-tree'],
+  //     },
+  //   );
+  // }
+
   async findOne(idOrSlug: string) {
-    const category = await this.prisma.category.findFirst({
-      where: {
-        OR: [{ id: idOrSlug }, { slug: idOrSlug }],
-      },
-      include: {
-        parent: true,
-        children: {
-          where: { isActive: true }, // optionally only active children
-          orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
-        },
-      },
-    });
+    const cacheKey = CACHE_KEYS.CATEGORY(idOrSlug);
 
-    if (!category) {
-      throw new NotFoundException('Category not found');
-    }
+    return this.cache.getOrSet(
+      cacheKey,
+      async () => {
+        const category = await this.prisma.category.findFirst({
+          where: {
+            OR: [{ id: idOrSlug }, { slug: idOrSlug }],
+          },
+          include: {
+            parent: true,
+            children: {
+              where: { isActive: true }, // optionally only active children
+              orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+            },
+          },
+        });
 
-    return category;
+        if (!category) {
+          throw new NotFoundException('Category not found');
+        }
+
+        return category;
+      },
+      {
+        ttl: 3600,
+        tags: [CACHE_KEYS.CATEGORIES(), CACHE_KEYS.CATEGORY(idOrSlug)],
+      },
+    );
   }
 
   async update(id: string, updateCategoryDto: UpdateCategoryDto) {
@@ -223,6 +272,12 @@ export class CategoriesService {
         // Update all descendants (children, grandchildren, etc.)
         await this.updateDescendantsPaths(tx, id);
 
+        await Promise.all([
+          this.cache.delete(CACHE_KEYS.CATEGORY(id)),
+          this.cache.delete(CACHE_KEYS.CATEGORIES(updated.slug)),
+          this.cache.deleteByTag(CACHE_KEYS.CATEGORIES()),
+        ]);
+
         return this.findOne(id); // return fresh category
       });
     } else {
@@ -257,32 +312,44 @@ export class CategoriesService {
       throw new ConflictException('Cannot delete category that has products');
     }
 
+    await this.cache.deleteByTag(CACHE_KEYS.CATEGORIES());
+
     return this.prisma.category.delete({ where: { id } });
   }
 
   async getTree(includeInactive = false) {
-    const all = await this.prisma.category.findMany({
-      where: includeInactive ? {} : { isActive: true },
-      include: { children: true },
-      orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
-    });
+    const cacheKey = CACHE_KEYS.CATEGORIES_TREE(includeInactive);
+    return this.cache.getOrSet(
+      cacheKey,
+      async () => {
+        const all = await this.prisma.category.findMany({
+          where: includeInactive ? {} : { isActive: true },
+          include: { children: true },
+          orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+        });
 
-    const map = new Map();
-    const roots: any[] = [];
+        const map = new Map();
+        const roots: any[] = [];
 
-    all.forEach((cat) => {
-      map.set(cat.id, { ...cat, children: [] });
-    });
+        all.forEach((cat) => {
+          map.set(cat.id, { ...cat, children: [] });
+        });
 
-    all.forEach((cat) => {
-      if (cat.parentId && map.has(cat.parentId)) {
-        map.get(cat.parentId).children.push(map.get(cat.id));
-      } else {
-        roots.push(map.get(cat.id));
-      }
-    });
+        all.forEach((cat) => {
+          if (cat.parentId && map.has(cat.parentId)) {
+            map.get(cat.parentId).children.push(map.get(cat.id));
+          } else {
+            roots.push(map.get(cat.id));
+          }
+        });
 
-    return roots;
+        return roots;
+      },
+      {
+        ttl: 3600,
+        tags: [CACHE_KEYS.CATEGORIES(), CACHE_KEYS.CATEGORIES_TREE()],
+      },
+    );
   }
 
   // Helper: Get all descendant IDs of a category (including itself)

@@ -1,58 +1,11 @@
-import {
-  Injectable,
-  Logger,
-  OnModuleDestroy,
-  OnModuleInit,
-} from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import Redis from 'ioredis';
 
 @Injectable()
-export class RedisService implements OnModuleInit, OnModuleDestroy {
-  private redisClient: Redis;
+export class RedisService {
   private readonly logger = new Logger(RedisService.name);
 
-  constructor(private configService: ConfigService) {}
-
-  async onModuleInit() {
-    const host = this.configService.get<string>('REDIS_HOST', 'localhost');
-    const port = this.configService.get<number>('REDIS_PORT', 6379);
-    const password = this.configService.get<string>('REDIS_PASSWORD', '');
-
-    this.redisClient = new Redis({
-      host,
-      port,
-      password,
-      retryStrategy: (times) => {
-        const delay = Math.min(times * 50, 2000);
-        return delay;
-      },
-      maxRetriesPerRequest: 3,
-    });
-
-    this.redisClient.on('connect', () => {
-      this.logger.log(`Connected to Redis at ${host}:${port}`);
-    });
-
-    this.redisClient.on('error', (error) => {
-      this.logger.error(`Redis connection error: ${error.message}`);
-    });
-
-    // Test connection
-    try {
-      await this.redisClient.ping();
-      this.logger.log('Redis connection test successful');
-    } catch (error) {
-      this.logger.error(`Redis connection test failed: ${error.message}`);
-    }
-  }
-
-  async onModuleDestroy() {
-    if (this.redisClient) {
-      await this.redisClient.quit();
-      this.logger.log('Redis connection closed');
-    }
-  }
+  constructor(@Inject('REDIS_CLIENT') private readonly redisClient: Redis) {}
 
   // ============ STRING OPERATIONS ============
 
@@ -299,12 +252,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
   // ============ LOCKING ============
 
   async acquireLock(lockKey: string, ttl: number = 10): Promise<boolean> {
-    const result = await this.redisClient.set(
-      lockKey,
-      'locked',
-      'EX',
-      ttl,
-    );
+    const result = await this.redisClient.set(lockKey, 'locked', 'EX', ttl);
     return result === 'OK';
   }
 

@@ -8,6 +8,7 @@ import { PrismaService } from 'src/shared/database/prisma.service';
 import { LocalStrategy } from './strategies/local.strategy';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { UsersModule } from '../users/users.module';
+import { EmailModule } from 'src/shared/email/email.module';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { UsersModule } from '../users/users.module';
       inject: [ConfigService],
     }),
     UsersModule,
+    EmailModule
   ],
   controllers: [AuthController],
   providers: [AuthService, PrismaService, LocalStrategy, JwtStrategy],

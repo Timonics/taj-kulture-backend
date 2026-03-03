@@ -5,7 +5,7 @@ export interface UserRegisteredPayload {
   email: string;
   name: string;
   verificationToken: string;
-  registrationMethod: 'email' | 'google' | 'facebook';
+  registrationMethod: 'email' | 'google' | 'facebook' | 'email-resend';
 }
 
 export interface UserVerifiedPayload {
@@ -61,7 +61,6 @@ export interface PasswordChangedPayload {
   userId: string;
   changedAt: Date;
   ipAddress?: string;
-  
 }
 
 export interface UserFollowedPayload {

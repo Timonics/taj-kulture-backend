@@ -6,23 +6,24 @@ import { UserRole } from 'generated/prisma/client';
 import { Roles } from 'src/core/decorators/roles.decorator';
 import { JwtAuthGuard } from 'src/modules/auth/guards/jwt.guard';
 import { RolesGuard } from 'src/modules/auth/guards/roles.guard';
+import { QUEUE_NAMES } from 'src/core/constants/app.constants';
 
 @Controller('admin/queues')
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(UserRole.ADMIN)
 export class QueueMonitorController {
   constructor(
-    @InjectQueue('email') private emailQueue: Queue,
-    @InjectQueue('notification') private notificationQueue: Queue,
-    @InjectQueue('analytics') private analyticsQueue: Queue,
+    @InjectQueue(QUEUE_NAMES.EMAIL) private emailQueue: Queue,
+    @InjectQueue(QUEUE_NAMES.NOTIFICATION) private notificationQueue: Queue,
+    @InjectQueue(QUEUE_NAMES.ANALYTICS) private analyticsQueue: Queue,
   ) {}
 
   @Get()
   async getAllQueues() {
     const queues = await Promise.all([
-      this.getQueueMetrics('email', this.emailQueue),
-      this.getQueueMetrics('notification', this.notificationQueue),
-      this.getQueueMetrics('analytics', this.analyticsQueue),
+      this.getQueueMetrics(QUEUE_NAMES.EMAIL, this.emailQueue),
+      this.getQueueMetrics(QUEUE_NAMES.NOTIFICATION, this.notificationQueue),
+      this.getQueueMetrics(QUEUE_NAMES.ANALYTICS, this.analyticsQueue),
     ]);
 
     return queues;

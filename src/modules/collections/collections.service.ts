@@ -5,19 +5,24 @@ import {
   ForbiddenException,
   BadRequestException,
   Logger,
+  Inject,
 } from '@nestjs/common';
 import { PrismaService } from '../../shared/database/prisma.service';
 import { CreateCollectionDto } from './dto/create-collection.dto';
 import { UpdateCollectionDto } from './dto/update-collection.dto';
 import { slugify } from '../../shared/utils/slugify';
 import { User, UserRole, CollectionType } from 'generated/prisma/client';
-import { instanceToPlain } from 'class-transformer';
+import { ICacheService } from 'src/shared/cache/cache.interface';
+import { CACHE_KEYS } from 'src/core/constants/app.constants';
 
 @Injectable()
 export class CollectionsService {
   private readonly logger = new Logger(CollectionsService.name);
 
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    @Inject('CACHE_SERVICE') private cache: ICacheService,
+  ) {}
 
   async getVendorIdFromUser(user: User): Promise<string | null> {
     if (user.role === UserRole.ADMIN) {
@@ -182,6 +187,8 @@ export class CollectionsService {
         });
       }
 
+      await this.cache.deleteByTag(CACHE_KEYS.COLLECTIONS());
+
       // Return created collection with all relations
       return tx.collection.findUnique({
         where: { id: collection.id },
@@ -205,108 +212,131 @@ export class CollectionsService {
   }
 
   async findAll(query: any) {
-    const {
-      page = 1,
-      limit = 20,
-      type,
-      vendorId,
-      isFeatured,
-      isLimited,
-      search,
-      sortBy = 'createdAt',
-      sortOrder = 'desc',
-    } = query;
+    const cacheKey = CACHE_KEYS.COLLECTIONS(query);
+    return await this.cache.getOrSet(
+      cacheKey,
+      async () => {
+        const {
+          page = 1,
+          limit = 20,
+          type,
+          vendorId,
+          isFeatured,
+          isLimited,
+          search,
+          sortBy = 'createdAt',
+          sortOrder = 'desc',
+        } = query;
 
-    const where: any = {
-      // Only show published collections by default
-      isPublished: true,
-    };
+        const where: any = {
+          // Only show published collections by default
+          isPublished: true,
+        };
 
-    if (type) where.type = type;
-    if (vendorId) where.vendorId = vendorId;
-    if (isFeatured !== undefined) where.isFeatured = isFeatured === 'true';
-    if (isLimited !== undefined) where.isLimited = isLimited === 'true';
+        if (type) where.type = type;
+        if (vendorId) where.vendorId = vendorId;
+        if (isFeatured !== undefined) where.isFeatured = isFeatured === 'true';
+        if (isLimited !== undefined) where.isLimited = isLimited === 'true';
 
-    if (search) {
-      where.OR = [
-        { name: { contains: search, mode: 'insensitive' } },
-        { description: { contains: search, mode: 'insensitive' } },
-        { story: { contains: search, mode: 'insensitive' } },
-      ];
-    }
+        if (search) {
+          where.OR = [
+            { name: { contains: search, mode: 'insensitive' } },
+            { description: { contains: search, mode: 'insensitive' } },
+            { story: { contains: search, mode: 'insensitive' } },
+          ];
+        }
 
-    // For admin views, we might want to include unpublished
-    // We'll handle that in the controller with a separate param
+        // For admin views, we might want to include unpublished
+        // We'll handle that in the controller with a separate param
 
-    const [collections, total] = await Promise.all([
-      this.prisma.collection.findMany({
-        where,
-        include: {
-          vendor: { select: { id: true, name: true, slug: true, logo: true } },
-          tags: true,
-          _count: {
-            select: { products: true },
-          },
-        },
-        orderBy: { [sortBy]: sortOrder },
-        skip: (page - 1) * limit,
-        take: +limit,
-      }),
-      this.prisma.collection.count({ where }),
-    ]);
+        const [collections, total] = await Promise.all([
+          this.prisma.collection.findMany({
+            where,
+            include: {
+              vendor: {
+                select: { id: true, name: true, slug: true, logo: true },
+              },
+              tags: true,
+              _count: {
+                select: { products: true },
+              },
+            },
+            orderBy: { [sortBy]: sortOrder },
+            skip: (page - 1) * limit,
+            take: +limit,
+          }),
+          this.prisma.collection.count({ where }),
+        ]);
 
-    return {
-      data: collections,
-      meta: { total, page, limit, pages: Math.ceil(total / limit) },
-    };
+        return {
+          data: collections,
+          meta: { total, page, limit, pages: Math.ceil(total / limit) },
+        };
+      },
+      {
+        ttl: 300,
+        tags: [CACHE_KEYS.COLLECTIONS(query), CACHE_KEYS.COLLECTIONS()],
+      },
+    );
   }
 
   async findOne(slug: string) {
-    const collection = await this.prisma.collection.findUnique({
-      where: { slug },
-      include: {
-        vendor: true,
-        products: {
-          orderBy: [{ isFeatured: 'desc' }, { sortOrder: 'asc' }],
+    const cacheKey = CACHE_KEYS.COLLECTION(slug);
+
+    return this.cache.getOrSet(
+      cacheKey,
+      async () => {
+        const collection = await this.prisma.collection.findUnique({
+          where: { slug },
           include: {
-            product: {
+            vendor: true,
+            products: {
+              orderBy: [{ isFeatured: 'desc' }, { sortOrder: 'asc' }],
               include: {
-                vendor: { select: { id: true, name: true, slug: true } },
-                images: { orderBy: { sortOrder: 'asc' } },
-                category: true,
-              },
-            },
-          },
-        },
-        vendors: {
-          include: {
-            vendor: {
-              include: {
-                _count: {
-                  select: { products: true, followers: true },
+                product: {
+                  include: {
+                    vendor: { select: { id: true, name: true, slug: true } },
+                    images: { orderBy: { sortOrder: 'asc' } },
+                    category: true,
+                  },
                 },
               },
             },
+            vendors: {
+              include: {
+                vendor: {
+                  include: {
+                    _count: {
+                      select: { products: true, followers: true },
+                    },
+                  },
+                },
+              },
+            },
+            tags: true,
+            categories: { include: { category: true } },
           },
-        },
-        tags: true,
-        categories: { include: { category: true } },
+        });
+
+        if (!collection) {
+          throw new NotFoundException('Collection not found');
+        }
+
+        // Format the response to make it cleaner
+        return {
+          ...collection,
+          products: collection.products.map((item) => ({
+            ...item.product,
+            isFeatured: item.isFeatured,
+            sortOrder: item.sortOrder,
+          })),
+        };
       },
-    });
-
-    if (!collection) {
-      throw new NotFoundException('Collection not found');
-    }
-
-    // Format the response to make it cleaner
-    return {
-      ...collection,
-      products: collection.products.map((item) => ({
-        ...item.product,
-        isFeatured: item.isFeatured,
-        sortOrder: item.sortOrder,
-      })),
-    };
+      {
+        ttl: 600,
+        tags: [CACHE_KEYS.COLLECTION(slug)],
+      },
+    );
   }
 
   async update(
@@ -455,6 +485,11 @@ export class CollectionsService {
         });
       }
 
+      await Promise.all([
+        this.cache.delete(CACHE_KEYS.COLLECTION(collection.slug)),
+        this.cache.deleteByTag(CACHE_KEYS.COLLECTIONS()),
+      ]);
+
       // Return updated collection
       return tx.collection.findUnique({
         where: { id },
@@ -491,6 +526,11 @@ export class CollectionsService {
     // Delete (cascading deletes handled by Prisma schema)
     await this.prisma.collection.delete({ where: { id } });
 
+    await Promise.all([
+      this.cache.delete(CACHE_KEYS.COLLECTION(collection.slug)),
+      this.cache.deleteByTag(CACHE_KEYS.COLLECTIONS()),
+    ]);
+
     return { message: 'Collection deleted successfully' };
   }
 
@@ -505,6 +545,11 @@ export class CollectionsService {
     if (!collection) {
       throw new NotFoundException('Collection not found');
     }
+
+    await Promise.all([
+      this.cache.delete(CACHE_KEYS.COLLECTION(collection.slug)),
+      this.cache.deleteByTag(CACHE_KEYS.COLLECTIONS()),
+    ]);
 
     return this.prisma.collection.update({
       where: { id },

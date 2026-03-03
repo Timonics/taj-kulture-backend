@@ -24,6 +24,7 @@ import { TransformInterceptor } from './core/interceptors/transform.interceptor'
 import { CustomValidationPipe } from './core/pipes/validation.pipe';
 import { LoggingMiddleware } from './core/middleware/logging.middleware';
 import { HelmetMiddleware } from './core/middleware/helmet.middleware';
+import { RedisModule } from './shared/redis/redis.module';
 
 @Module({
   imports: [
@@ -52,6 +53,7 @@ import { HelmetMiddleware } from './core/middleware/helmet.middleware';
     ProductsModule,
     UploadModule,
     CollectionsModule,
+    RedisModule,
   ],
   providers: [
     // Global Guards
@@ -65,10 +67,10 @@ import { HelmetMiddleware } from './core/middleware/helmet.middleware';
       provide: APP_INTERCEPTOR,
       useClass: TransformInterceptor,
     },
-    {
-      provide: APP_INTERCEPTOR,
-      useClass: TimeoutInterceptor,
-    },
+    // {
+    //   provide: APP_INTERCEPTOR,
+    //   useClass: TimeoutInterceptor,
+    // },
     {
       provide: APP_INTERCEPTOR,
       useClass: LoggingInterceptor,
@@ -94,11 +96,7 @@ import { HelmetMiddleware } from './core/middleware/helmet.middleware';
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {
     consumer
-      .apply(
-        HelmetMiddleware,
-        CorrelationIdMiddleware,
-        LoggingMiddleware,
-      )
+      .apply(HelmetMiddleware, CorrelationIdMiddleware, LoggingMiddleware)
       .forRoutes('*');
   }
 }

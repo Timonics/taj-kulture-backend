@@ -5,6 +5,7 @@ import {
   BadRequestException,
   ForbiddenException,
   Logger,
+  Inject,
 } from '@nestjs/common';
 import { PrismaService } from '../../shared/database/prisma.service';
 import { CreateProductDto } from './dto/create-product.dto';
@@ -14,6 +15,8 @@ import { User, UserRole, ProductStatus } from 'generated/prisma/client';
 import { instanceToPlain } from 'class-transformer';
 import { UploadService } from 'src/shared/upload/upload.service';
 import { ProductResponseDto } from './dto/product-response.dto';
+import { ICacheService } from 'src/shared/cache/cache.interface';
+import { CACHE_KEYS } from 'src/core/constants/app.constants';
 
 @Injectable()
 export class ProductsService {
@@ -22,6 +25,7 @@ export class ProductsService {
   constructor(
     private prisma: PrismaService,
     private uploadService: UploadService,
+    @Inject('CACHE_SERVICE') private cache: ICacheService,
   ) {}
 
   // Helper to ensure user has vendor rights
@@ -164,6 +168,12 @@ export class ProductsService {
         });
       }
 
+      await Promise.all([
+        this.cache.deleteByTag(CACHE_KEYS.PRODUCTS()),
+        this.cache.deleteByTag(CACHE_KEYS.VENDORS({ id: vendor.id })),
+        this.cache.delete(CACHE_KEYS.FEATURED_PRODUCTS),
+      ]);
+
       // Return created product with all relations
       return tx.product.findUnique({
         where: { id: product.id },
@@ -182,109 +192,131 @@ export class ProductsService {
   }
 
   async findAll(query: any) {
-    const {
-      page = 1,
-      limit = 20,
-      categoryId,
-      vendorId,
-      minPrice,
-      maxPrice,
-      status,
-      isFeatured,
-      search,
-      sortBy = 'createdAt',
-      sortOrder = 'desc',
-    } = query;
+    const cacheKey = CACHE_KEYS.PRODUCTS(query);
 
-    const where: any = {};
+    return this.cache.getOrSet(
+      cacheKey,
+      async () => {
+        const {
+          page = 1,
+          limit = 20,
+          categoryId,
+          vendorId,
+          minPrice,
+          maxPrice,
+          status,
+          isFeatured,
+          search,
+          sortBy = 'createdAt',
+          sortOrder = 'desc',
+        } = query;
 
-    if (categoryId) where.categoryId = categoryId;
-    if (vendorId) where.vendorId = vendorId;
-    if (status) where.status = status;
-    if (isFeatured !== undefined) where.isFeatured = isFeatured === 'true';
-    if (minPrice !== undefined || maxPrice !== undefined) {
-      where.price = {};
-      if (minPrice) where.price.gte = +minPrice;
-      if (maxPrice) where.price.lte = +maxPrice;
-    }
-    if (search) {
-      where.OR = [
-        { name: { contains: search, mode: 'insensitive' } },
-        { description: { contains: search, mode: 'insensitive' } },
-        { brand: { contains: search, mode: 'insensitive' } },
-      ];
-    }
+        const where: any = {};
 
-    // Optionally filter only published products for public endpoints
-    // For vendor dashboard, they might want to see drafts etc. We'll handle in controller.
+        if (categoryId) where.categoryId = categoryId;
+        if (vendorId) where.vendorId = vendorId;
+        if (status) where.status = status;
+        if (isFeatured !== undefined) where.isFeatured = isFeatured === 'true';
+        if (minPrice !== undefined || maxPrice !== undefined) {
+          where.price = {};
+          if (minPrice) where.price.gte = +minPrice;
+          if (maxPrice) where.price.lte = +maxPrice;
+        }
+        if (search) {
+          where.OR = [
+            { name: { contains: search, mode: 'insensitive' } },
+            { description: { contains: search, mode: 'insensitive' } },
+            { brand: { contains: search, mode: 'insensitive' } },
+          ];
+        }
 
-    const [products, total] = await Promise.all([
-      this.prisma.product.findMany({
-        where,
-        include: {
-          vendor: {
-            select: {
-              id: true,
-              name: true,
-              slug: true,
-              logo: true,
-              isVerified: true,
+        // Optionally filter only published products for public endpoints
+        // For vendor dashboard, they might want to see drafts etc. We'll handle in controller.
+
+        const [products, total] = await Promise.all([
+          this.prisma.product.findMany({
+            where,
+            include: {
+              vendor: {
+                select: {
+                  id: true,
+                  name: true,
+                  slug: true,
+                  logo: true,
+                  isVerified: true,
+                },
+              },
+              category: { select: { id: true, name: true, slug: true } },
+              images: { where: { isPrimary: true }, take: 1 },
+              _count: {
+                select: { reviews: true },
+              },
             },
-          },
-          category: { select: { id: true, name: true, slug: true } },
-          images: { where: { isPrimary: true }, take: 1 },
-          _count: {
-            select: { reviews: true },
-          },
-        },
-        orderBy: { [sortBy]: sortOrder },
-        skip: (page - 1) * limit,
-        take: +limit,
-      }),
-      this.prisma.product.count({ where }),
-    ]);
+            orderBy: { [sortBy]: sortOrder },
+            skip: (page - 1) * limit,
+            take: +limit,
+          }),
+          this.prisma.product.count({ where }),
+        ]);
 
-    return {
-      data: products,
-      meta: { total, page, limit, pages: Math.ceil(total / limit) },
-    };
+        return {
+          data: products,
+          meta: { total, page, limit, pages: Math.ceil(total / limit) },
+        };
+      },
+      {
+        ttl: 300,
+        tags: [CACHE_KEYS.PRODUCTS()],
+      },
+    );
   }
 
   async findOne(slug: string) {
-    const product = await this.prisma.product.findUnique({
-      where: { slug },
-      include: {
-        vendor: {
-          select: {
-            id: true,
-            name: true,
-            slug: true,
-            logo: true,
-            isVerified: true,
-            rating: true,
-            reviewCount: true,
+    const cacheKey = CACHE_KEYS.PRODUCT(slug);
+
+    return this.cache.getOrSet(
+      cacheKey,
+      async () => {
+        const product = await this.prisma.product.findUnique({
+          where: { slug },
+          include: {
+            vendor: {
+              select: {
+                id: true,
+                name: true,
+                slug: true,
+                logo: true,
+                isVerified: true,
+                rating: true,
+                reviewCount: true,
+              },
+            },
+            category: true,
+            images: { orderBy: { sortOrder: 'asc' } },
+            features: { orderBy: { sortOrder: 'asc' } },
+            materials: { orderBy: { sortOrder: 'asc' } },
+            specifications: { orderBy: { sortOrder: 'asc' } },
+            colors: true,
+            sizes: true,
+            reviews: {
+              take: 5,
+              orderBy: { createdAt: 'desc' },
+              include: { user: { select: { username: true, avatar: true } } },
+            },
           },
-        },
-        category: true,
-        images: { orderBy: { sortOrder: 'asc' } },
-        features: { orderBy: { sortOrder: 'asc' } },
-        materials: { orderBy: { sortOrder: 'asc' } },
-        specifications: { orderBy: { sortOrder: 'asc' } },
-        colors: true,
-        sizes: true,
-        reviews: {
-          take: 5,
-          orderBy: { createdAt: 'desc' },
-          include: { user: { select: { username: true, avatar: true } } },
-        },
+        });
+
+        if (!product) {
+          throw new NotFoundException('Product not found');
+        }
+
+        return product;
       },
-    });
-
-    if (!product) {
-      throw new NotFoundException('Product not found');
-    }
-
-    return product;
+      {
+        ttl: 600, // 10 minutes for product details
+        tags: [CACHE_KEYS.PRODUCT(slug), CACHE_KEYS.PRODUCTS()],
+      },
+    );
   }
 
   async update(user: User, id: string, updateProductDto: UpdateProductDto) {
@@ -449,6 +481,14 @@ export class ProductsService {
         }
       }
 
+      await Promise.all([
+        this.cache.delete(CACHE_KEYS.PRODUCT(product.slug)),
+        this.cache.delete(CACHE_KEYS.PRODUCT(id)),
+        this.cache.deleteByTag(CACHE_KEYS.PRODUCTS()),
+        this.cache.deleteByTag(CACHE_KEYS.VENDORS({ id: product.vendorId })),
+        this.cache.delete(CACHE_KEYS.FEATURED_PRODUCTS),
+      ]);
+
       // Return updated product with all relations
       return tx.product.findUnique({
         where: { id },
@@ -496,7 +536,39 @@ export class ProductsService {
       );
     }
 
+    await Promise.all([
+      this.cache.delete(CACHE_KEYS.PRODUCT(product.slug)),
+      this.cache.delete(CACHE_KEYS.PRODUCT(id)),
+      this.cache.deleteByTag(CACHE_KEYS.PRODUCTS()),
+      this.cache.deleteByTag(CACHE_KEYS.VENDORS({ id: product.vendorId })),
+      this.cache.delete(CACHE_KEYS.FEATURED_PRODUCTS),
+    ]);
+
     return { message: 'Product deleted successfully' };
+  }
+
+  async getFeaturedProducts() {
+    return this.cache.getOrSet(
+      CACHE_KEYS.FEATURED_PRODUCTS,
+      async () => {
+        return this.prisma.product.findMany({
+          where: {
+            isFeatured: true,
+            status: 'PUBLISHED',
+            isPublished: true,
+          },
+          take: 10,
+          include: {
+            images: { where: { isPrimary: true }, take: 1 },
+            vendor: { select: { name: true, slug: true } },
+          },
+        });
+      },
+      {
+        ttl: 1800, // 30 minutes
+        tags: [CACHE_KEYS.PRODUCTS(), CACHE_KEYS.FEATURED_PRODUCTS],
+      },
+    );
   }
 
   // Additional method: update stock (e.g., after order)

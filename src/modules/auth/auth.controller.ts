@@ -9,6 +9,7 @@ import {
   Get,
   Res,
   Req,
+  Query,
 } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { RegisterDto, LoginDto, RefreshTokenDto } from './dto';
@@ -17,6 +18,7 @@ import { AuthGuard } from '@nestjs/passport';
 import { Response } from 'express';
 import { LocalAuthGuard } from './guards/local.guard';
 import { JwtAuthGuard } from './guards/jwt.guard';
+import { VerifyEmailDto } from './dto/verify-email.dto';
 
 @Controller('auth')
 export class AuthController {
@@ -32,6 +34,18 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   async login(@Request() req) {
     return this.authService.login(req.user);
+  }
+
+  @Get('verify-email')
+  @HttpCode(HttpStatus.OK)
+  async verifyEmail(@Query() tokenDto: VerifyEmailDto) {
+    return this.authService.verifyEmail(tokenDto.token);
+  }
+
+  @Post('resend-verification')
+  @HttpCode(HttpStatus.OK)
+  async resendVerification(@Body('email') email: string) {
+    return this.authService.resendVerificationEmail(email);
   }
 
   @Post('refresh')

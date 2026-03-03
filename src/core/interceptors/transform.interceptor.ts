@@ -13,7 +13,7 @@ export class TransformInterceptor<T> implements NestInterceptor<T, ApiResponse<T
   intercept(context: ExecutionContext, next: CallHandler): Observable<ApiResponse<T>> {
     const ctx = context.switchToHttp();
     const request = ctx.getRequest();
-    const response = ctx.getResponse();
+    // const response = ctx.getResponse();
 
     return next.handle().pipe(
       map((data) => ({

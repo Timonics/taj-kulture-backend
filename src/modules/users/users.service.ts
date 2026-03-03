@@ -25,11 +25,16 @@ import {
 } from 'src/shared/events/event-payloads.interface';
 import { UserNotFoundException } from 'src/core/exceptions/user-not-found.exception';
 import { InvalidCredentialsException } from 'src/core/exceptions/invalid-credientials.exception';
+import { JwtService } from '@nestjs/jwt';
+import { ConfigService } from '@nestjs/config';
+import { addDays } from 'date-fns';
 
 @Injectable()
 export class UsersService {
   constructor(
     private prisma: PrismaService,
+    private jwtService: JwtService,
+    private configService: ConfigService,
     private eventBus: EventBus,
   ) {}
 
@@ -44,12 +49,21 @@ export class UsersService {
     // Hash password
     const hashedPassword = await bcrypt.hash(password, 10);
 
+    const verificationToken = this.jwtService.sign(
+      { email, purpose: 'email-verification' },
+      { secret: this.configService.get('JWT_SECRET'), expiresIn: '1d' },
+    );
+
+    const verificationExpires = addDays(new Date(), 1);
+
     // Create user
     const user = await this.prisma.user.create({
       data: {
         email,
         username,
         password: hashedPassword,
+        emailVerificationToken: verificationToken,
+        emailVerificationExpires: verificationExpires,
         ...rest,
       },
     });
