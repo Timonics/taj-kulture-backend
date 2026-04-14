@@ -13,7 +13,7 @@ import { Queue } from 'bull';
 import { UserRole } from 'generated/prisma/client';
 import { PrismaService } from '../database/prisma.service';
 import { Roles } from 'src/core/decorators/roles.decorator';
-import { JwtAuthGuard } from 'src/modules/auth/guards/jwt.guard';
+import { JwtAuthGuard } from 'src/modules/auth/guards/jwt-auth.guard';
 import { RolesGuard } from 'src/modules/auth/guards/roles.guard';
 
 @Controller('admin/dead-letters')

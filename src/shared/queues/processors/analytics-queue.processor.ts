@@ -1,114 +1,164 @@
 import { Process, Processor } from '@nestjs/bull';
-import { Logger } from '@nestjs/common';
 import { Job } from 'bull';
 import { PrismaService } from '../../database/prisma.service';
+import { ILogger } from '../../logger/logger.interface';
+import { LoggerService } from '../../logger/logger.service';
+import { QUEUE_NAMES } from '../../../core/constants/app.constants';
 
-@Processor('analytics')
+/**
+ * ANALYTICS QUEUE PROCESSOR
+ *
+ * Processes analytics jobs: product views, searches, orders, registrations.
+ *
+ * ERROR HANDLING:
+ * - Analytics failures are logged but don't throw (non-critical)
+ * - No dead letter – analytics can be safely dropped on failure
+ * - Still uses retry for transient errors (network timeouts)
+ */
+@Processor(QUEUE_NAMES.ANALYTICS)
 export class AnalyticsQueueProcessor {
-  private readonly logger = new Logger(AnalyticsQueueProcessor.name);
+  private readonly logger: ILogger;
 
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    logger: LoggerService,
+  ) {
+    this.logger = logger.child('AnalyticsQueueProcessor');
+  }
 
   @Process('track-product-view')
-  async handleProductView(job: Job) {
-    this.logger.debug(`Processing product view job ${job.id}`);
+  async handleProductView(job: Job): Promise<{ success: boolean }> {
+    const { productId, userId, sessionId, correlationId } = job.data;
+    this.logger.debug(`Tracking product view for ${productId}`, {
+      correlationId,
+      jobId: job.id,
+    });
 
     try {
-      const { productId, userId, sessionId } = job.data;
-
       await this.prisma.productView.create({
-        data: {
-          productId,
-          userId,
-          sessionId,
-        },
+        data: { productId, userId, sessionId },
       });
-
-      // Update product view count (if you have such a field)
-      // await this.prisma.product.update({
-      //   where: { id: productId },
-      //   data: { viewCount: { increment: 1 } },
-      // });
-
+      this.logger.debug(`Product view recorded for ${productId}`, {
+        correlationId,
+      });
       return { success: true };
     } catch (error) {
-      this.logger.error(`Failed to track product view: ${error.message}`);
-      // Don't throw - analytics failures shouldn't break the app
-      // Just log and continue
-      return { success: false, error: error.message };
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorStack = error instanceof Error ? error.stack : '';
+      this.logger.error(
+        `Failed to track product view: ${errorMessage}`,
+        errorStack,
+        { correlationId },
+      );
+      return { success: false };
     }
   }
 
   @Process('track-search')
-  async handleSearch(job: Job) {
-    this.logger.debug(`Processing search tracking job ${job.id}`);
+  async handleSearch(job: Job): Promise<{ success: boolean }> {
+    const { query, userId, sessionId, resultsCount, filters, correlationId } =
+      job.data;
+    this.logger.debug(`Tracking search: "${query}"`, {
+      correlationId,
+      jobId: job.id,
+    });
 
     try {
-      const { query, userId, sessionId, resultsCount } = job.data;
-
       await this.prisma.searchQuery.create({
         data: {
           query,
           userId,
           sessionId,
           resultsCount,
+          // filters: filters || {},
         },
       });
-
+      this.logger.debug(`Search tracked: "${query}"`, { correlationId });
       return { success: true };
     } catch (error) {
-      this.logger.error(`Failed to track search: ${error.message}`);
-      return { success: false, error: error.message };
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorStack = error instanceof Error ? error.stack : '';
+      this.logger.error(
+        `Failed to track search: ${errorMessage}`,
+        errorStack,
+        { correlationId },
+      );
+      return { success: false };
     }
   }
 
   @Process('track-order')
-  async handleOrderTracking(job: Job) {
-    this.logger.log(`Processing order tracking job ${job.id}`);
+  async handleOrderTracking(job: Job): Promise<{ success: boolean }> {
+    const { orderId, userId, total, items, correlationId } = job.data;
+    this.logger.debug(`Tracking order analytics for ${orderId}`, {
+      correlationId,
+      jobId: job.id,
+    });
 
     try {
-      const { orderId, userId, total, items } = job.data;
+      // Group items by vendor to update sales
+      const vendorTotals = new Map<string, number>();
+      for (const item of items) {
+        const itemTotal = item.price * item.quantity;
+        vendorTotals.set(
+          item.vendorId,
+          (vendorTotals.get(item.vendorId) || 0) + itemTotal,
+        );
+      }
 
-      // You might want to update vendor stats here
-      // Group items by vendor
-      const vendorTotals = items.reduce((acc: any, item: any) => {
-        acc[item.vendorId] = (acc[item.vendorId] || 0) + item.total;
-        return acc;
-      }, {});
-
-      // Update each vendor's sales
-      for (const [vendorId, vendorTotal] of Object.entries(vendorTotals)) {
+      // Update each vendor's total sales
+      for (const [vendorId, vendorTotal] of vendorTotals) {
         await this.prisma.vendor.update({
           where: { id: vendorId },
-          data: {
-            totalSales: { increment: vendorTotal as number },
-          },
+          data: { totalSales: { increment: vendorTotal } },
         });
       }
 
-      this.logger.log(`Order ${orderId} analytics processed`);
+      // Optionally store order analytics summary
+      // await this.prisma.orderAnalytics.create({
+      //   data: { orderId, userId, total, itemCount: items.length },
+      // });
+
+      this.logger.info(`Order analytics processed for ${orderId}`, {
+        correlationId,
+      });
       return { success: true };
     } catch (error) {
-      this.logger.error(`Failed to track order: ${error.message}`);
-      return { success: false, error: error.message };
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorStack = error instanceof Error ? error.stack : '';
+      this.logger.error(
+        `Failed to track order: ${errorMessage}`,
+        errorStack,
+        { correlationId },
+      );
+      return { success: false };
     }
   }
 
   @Process('track-registration')
-  async handleRegistrationTracking(job: Job) {
-    this.logger.log(`Processing registration tracking job ${job.id}`);
+  async handleRegistrationTracking(job: Job): Promise<{ success: boolean }> {
+    const { userId, method, correlationId } = job.data;
+    this.logger.debug(`Tracking registration for user ${userId}`, {
+      correlationId,
+      jobId: job.id,
+    });
 
     try {
-      const { userId, method } = job.data;
-
-      // Send to external analytics (Google Analytics, Mixpanel, etc.)
-      // await this.analyticsService.trackEvent('user_registered', { userId, method });
-
-      this.logger.log(`Registration tracked for user ${userId}`);
+      // Example: send to external analytics service (Mixpanel, Google Analytics)
+      // await this.analyticsService.track('user_registered', { userId, method });
+      this.logger.info(`Registration tracked for user ${userId} via ${method}`, {
+        correlationId,
+      });
       return { success: true };
     } catch (error) {
-      this.logger.error(`Failed to track registration: ${error.message}`);
-      return { success: false, error: error.message };
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorStack = error instanceof Error ? error.stack : '';
+      this.logger.error(
+        `Failed to track registration: ${errorMessage}`,
+        errorStack,
+        { correlationId },
+      );
+      return { success: false };
     }
   }
 }

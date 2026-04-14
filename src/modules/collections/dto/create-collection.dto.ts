@@ -6,7 +6,6 @@ import {
   IsBoolean,
   IsArray,
   ValidateNested,
-  IsUUID,
   IsUrl,
   IsDateString,
   IsInt,
@@ -17,7 +16,7 @@ import { Type } from 'class-transformer';
 import { CollectionType } from 'generated/prisma/client';
 
 class CollectionItemDto {
-  @IsUUID()
+  @IsString()
   productId: string;
 
   @IsBoolean()
@@ -31,7 +30,7 @@ class CollectionItemDto {
 }
 
 class CollectionVendorDto {
-  @IsUUID()
+  @IsString()
   vendorId: string;
 
   @IsString()
@@ -76,7 +75,7 @@ export class CreateCollectionDto {
   @IsOptional()
   curator?: string;
 
-  @IsUUID()
+  @IsString()
   @IsOptional()
   curatorId?: string;
 
@@ -127,7 +126,7 @@ export class CreateCollectionDto {
   tags?: string[]; // simple strings
 
   @IsArray()
-  @IsUUID('all', { each: true })
+  @IsString({ each: true })
   @IsOptional()
   categoryIds?: string[];
 }

@@ -1,12 +1,4 @@
-import {
-  Injectable,
-  NotFoundException,
-  ConflictException,
-  ForbiddenException,
-  BadRequestException,
-  Logger,
-  Inject,
-} from '@nestjs/common';
+import { Injectable, NotFoundException, Logger, Inject } from '@nestjs/common';
 import { PrismaService } from '../../shared/database/prisma.service';
 import { CreateCollectionDto } from './dto/create-collection.dto';
 import { UpdateCollectionDto } from './dto/update-collection.dto';
@@ -14,6 +6,14 @@ import { slugify } from '../../shared/utils/slugify';
 import { User, UserRole, CollectionType } from 'generated/prisma/client';
 import { ICacheService } from 'src/shared/cache/cache.interface';
 import { CACHE_KEYS } from 'src/core/constants/app.constants';
+import {
+  CategoryNotFoundException,
+  ProductNotFoundException,
+  UnauthorizedException,
+  VendorNotFoundException,
+  CollectionConflictException,
+  CollectionNotFoundException,
+} from 'src/core/exceptions';
 
 @Injectable()
 export class CollectionsService {
@@ -35,7 +35,7 @@ export class CollectionsService {
     });
 
     if (!vendor) {
-      throw new ForbiddenException(
+      throw new UnauthorizedException(
         'You must be a vendor to create collections',
       );
     }
@@ -64,7 +64,10 @@ export class CollectionsService {
       where: { slug },
     });
     if (existing) {
-      throw new ConflictException('Collection with this slug already exists');
+      throw new CollectionConflictException(
+        slug,
+        'Collection with this slug already exists',
+      );
     }
 
     // Validate product IDs if provided (vendors can only use their own products unless admin)
@@ -78,7 +81,7 @@ export class CollectionsService {
       });
 
       if (existingProducts.length !== productIds.length) {
-        throw new NotFoundException('One or more products not found');
+        throw new ProductNotFoundException('One or more products not found');
       }
 
       // If not admin, ensure all products belong to this vendor
@@ -87,7 +90,7 @@ export class CollectionsService {
           (p) => p.vendorId !== vendorId,
         );
         if (invalidProducts.length > 0) {
-          throw new ForbiddenException(
+          throw new UnauthorizedException(
             'You can only add your own products to collections',
           );
         }
@@ -96,7 +99,7 @@ export class CollectionsService {
 
     // Validate vendor IDs if provided (admin only)
     if (vendors && vendors.length > 0 && user.role !== UserRole.ADMIN) {
-      throw new ForbiddenException(
+      throw new UnauthorizedException(
         'Only admins can add multiple vendors to a collection',
       );
     }
@@ -107,7 +110,7 @@ export class CollectionsService {
         where: { id: { in: vendorIds } },
       });
       if (existingVendors.length !== vendorIds.length) {
-        throw new NotFoundException('One or more vendors not found');
+        throw new VendorNotFoundException('One or more vendors not found');
       }
     }
 
@@ -117,7 +120,7 @@ export class CollectionsService {
         where: { id: { in: categoryIds } },
       });
       if (existingCategories.length !== categoryIds.length) {
-        throw new NotFoundException('One or more categories not found');
+        throw new CategoryNotFoundException('One or more categories not found');
       }
     }
 
@@ -269,7 +272,10 @@ export class CollectionsService {
         ]);
 
         return {
-          data: collections,
+          data:
+            collections && collections.length > 0
+              ? collections
+              : 'No collections found',
           meta: { total, page, limit, pages: Math.ceil(total / limit) },
         };
       },
@@ -319,7 +325,7 @@ export class CollectionsService {
         });
 
         if (!collection) {
-          throw new NotFoundException('Collection not found');
+          throw new CollectionNotFoundException();
         }
 
         // Format the response to make it cleaner
@@ -362,7 +368,7 @@ export class CollectionsService {
     if (user.role !== UserRole.ADMIN) {
       const vendorId = await this.getVendorIdFromUser(user);
       if (collection.vendorId !== vendorId) {
-        throw new ForbiddenException(
+        throw new UnauthorizedException(
           'You can only update your own collections',
         );
       }
@@ -384,7 +390,10 @@ export class CollectionsService {
         where: { slug: newSlug },
       });
       if (existing) {
-        throw new ConflictException('Collection with this slug already exists');
+        throw new CollectionConflictException(
+          newSlug,
+          'Collection with this slug already exists',
+        );
       }
     }
 
@@ -396,7 +405,10 @@ export class CollectionsService {
         where: { slug: finalSlug },
       });
       if (existing && existing.id !== id) {
-        throw new ConflictException('Generated slug already exists');
+        throw new CollectionConflictException(
+          existing.slug,
+          'Generated slug already exists',
+        );
       }
     }
 
@@ -436,7 +448,7 @@ export class CollectionsService {
       // Replace vendors if provided (admin only)
       if (vendors !== undefined) {
         if (vendors.length > 0 && user.role !== UserRole.ADMIN) {
-          throw new ForbiddenException('Only admins can update vendors');
+          throw new UnauthorizedException('Only admins can update vendors');
         }
         await tx.collectionVendor.deleteMany({ where: { collectionId: id } });
         if (vendors.length > 0) {
@@ -510,14 +522,14 @@ export class CollectionsService {
     });
 
     if (!collection) {
-      throw new NotFoundException('Collection not found');
+      throw new CollectionNotFoundException();
     }
 
     // Check permissions
     if (user.role !== UserRole.ADMIN) {
       const vendorId = await this.getVendorIdFromUser(user);
       if (collection.vendorId !== vendorId) {
-        throw new ForbiddenException(
+        throw new UnauthorizedException(
           'You can only delete your own collections',
         );
       }
@@ -543,7 +555,7 @@ export class CollectionsService {
     });
 
     if (!collection) {
-      throw new NotFoundException('Collection not found');
+      throw new CollectionNotFoundException();
     }
 
     await Promise.all([

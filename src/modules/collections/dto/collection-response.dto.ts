@@ -1,4 +1,3 @@
-// src/modules/collections/dto/collection-response.dto.ts
 import { Expose, Type } from 'class-transformer';
 import { CollectionType } from 'generated/prisma/client';
 
@@ -113,4 +112,26 @@ export class CollectionResponseDto {
 
   @Expose()
   updatedAt: Date;
+}
+
+class CollectionMetaDto {
+  @Expose()
+  total: number;
+
+  @Expose()
+  page: number;
+
+  @Expose()
+  limit: number;
+
+  @Expose()
+  pages: number;
+}
+
+export class CollectionsResponseDto {
+  @Expose()
+  data: CollectionResponseDto[] | string;
+
+  @Expose()
+  meta: CollectionMetaDto;
 }

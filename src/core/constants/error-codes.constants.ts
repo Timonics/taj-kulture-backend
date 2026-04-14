@@ -1,31 +1,160 @@
+/**
+ * UNIFIED ERROR CODE REGISTRY
+ * 
+ * Merged from:
+ * 1. Your existing ERROR_CODES (with business logic)
+ * 2. Enhanced ErrorCodes (with more categories)
+ * 
+ * Format: DOMAIN_XXXX (e.g., AUTH_1001)
+ * - First 4 letters: Domain (AUTH, USER, PROD, etc.)
+ * - Last 4 digits: Specific error number
+ * 
+ * RANGES BY DOMAIN:
+ * 1000-1999: Authentication (AUTH_)
+ * 2000-2999: Users (USER_)
+ * 3000-3999: Vendors (VENDOR_)
+ * 4000-4999: Products (PROD_)
+ * 5000-5999: Orders (ORDER_)
+ * 6000-6999: Payments (PAY_)
+ * 7000-7999: Reviews (REV_)
+ * 8000-8999: Categories (CAT_)
+ * 9000-9999: System (SYS_)
+ * 
+ * Additional ranges for your existing codes:
+ * 10000-10999: Collections (COLL_)
+ * 11000-11999: Cart (CART_)
+ */
+
 export const ERROR_CODES = {
-  // Auth errors (1000-1999)
-  UNAUTHORIZED: 'AUTH_1000',
-  INVALID_CREDENTIALS: 'AUTH_1001',
-  TOKEN_EXPIRED: 'AUTH_1002',
-  INVALID_TOKEN: 'AUTH_1003',
-  EMAIL_NOT_VERIFIED: 'AUTH_1004',
-  
-  // User errors (2000-2999)
-  USER_NOT_FOUND: 'USER_2000',
-  USER_ALREADY_EXISTS: 'USER_2001',
-  INVALID_PASSWORD: 'USER_2002',
-  
-  // Product errors (3000-3999)
-  PRODUCT_NOT_FOUND: 'PROD_3000',
-  PRODUCT_OUT_OF_STOCK: 'PROD_3001',
-  PRODUCT_INVALID: 'PROD_3002',
-  
-  // Order errors (4000-4999)
-  ORDER_NOT_FOUND: 'ORDER_4000',
-  ORDER_INVALID_STATUS: 'ORDER_4001',
-  
-  // Validation errors (9000-9999)
-  VALIDATION_FAILED: 'VAL_9000',
-  INVALID_INPUT: 'VAL_9001',
-  
-  // Server errors (10000+)
-  INTERNAL_ERROR: 'SRV_10000',
-  DATABASE_ERROR: 'SRV_10001',
-  QUEUE_ERROR: 'SRV_10002',
+  // ========== Authentication (1000-1999) ==========
+  UNAUTHORIZED: 'AUTH_1000',           // Your existing
+  INVALID_CREDENTIALS: 'AUTH_1001',    // Your existing
+  TOKEN_EXPIRED: 'AUTH_1002',          // Your existing
+  INVALID_TOKEN: 'AUTH_1003',          // Your existing
+  EMAIL_NOT_VERIFIED: 'AUTH_1004',     // Your existing
+  TOKEN_INVALID_OR_EXPIRED: 'AUTH_1005',
+  EMAIL_ALREADY_VERIFIED: 'AUTH_1006',
+  PASSWORD_TOO_WEAK: 'AUTH_1007',
+  ACCOUNT_LOCKED: 'AUTH_1008',
+  TOO_MANY_ATTEMPTS: 'AUTH_1009',
+  REFRESH_TOKEN_INVALID: 'AUTH_1010',
+  REFRESH_TOKEN_EXPIRED: 'AUTH_1011',
+  GOOGLE_AUTH_FAILED: 'AUTH_1012',
+
+  // ========== Users (2000-2999) ==========
+  USER_NOT_FOUND: 'USER_2000',          // Your existing
+  USER_ALREADY_EXISTS: 'USER_2001',     // Your existing
+  INVALID_PASSWORD: 'USER_2002',        // Your existing
+  EMAIL_CONFLICT: 'USER_2003',          // Your existing (renamed from EMAIL_CONFL)
+  USERNAME_CONFLICT: 'USER_2004',       // Your existing (renamed from USERNAME_CONFL)
+  USER_FOLLOW_CONFLICT: 'USER_2005',    // Your existing (renamed from USER_FOLLOW_CONFL)
+  USER_INVALID_ID: 'USER_2006',
+  USER_CANNOT_FOLLOW_SELF: 'USER_2007',
+  USER_NOT_FOLLOWING: 'USER_2008',
+  USER_EMAIL_SEND_FAILED: 'USER_2009',
+  USER_PHONE_INVALID: 'USER_2010',
+
+  // ========== Vendors (3000-3999) ==========
+  VENDOR_NOT_FOUND: 'VENDOR_3000',      // Your existing (renamed from VEN-7000)
+  VENDOR_CONFLICT: 'VENDOR_3001',       // Your existing (renamed from VEN-7001)
+  VENDOR_PENDING_APPROVAL: 'VENDOR_3002',
+  VENDOR_REJECTED: 'VENDOR_3003',
+  VENDOR_ALREADY_VERIFIED: 'VENDOR_3004',
+  VENDOR_APPLICATION_NOT_FOUND: 'VENDOR_3005',
+  VENDOR_SUSPENDED: 'VENDOR_3006',
+  VENDOR_SLUG_TAKEN: 'VENDOR_3007',
+  VENDOR_NOT_APPROVED: 'VENDOR_3008',
+
+  // ========== Products (4000-4999) ==========
+  PRODUCT_NOT_FOUND: 'PROD_4000',       // Your existing
+  PRODUCT_OUT_OF_STOCK: 'PROD_4001',    // Your existing
+  PRODUCT_INVALID: 'PROD_4002',         // Your existing
+  PRODUCT_CONFLICT: 'PROD_4003',        // Your existing (renamed from PROD_CONFL)
+  PRODUCT_UNAUTHORIZED: 'PROD_4004',
+  PRODUCT_INVALID_PRICE: 'PROD_4005',
+  PRODUCT_VARIANT_INVALID: 'PROD_4006',
+  PRODUCT_IMAGE_UPLOAD_FAILED: 'PROD_4007',
+  PRODUCT_IMAGE_DELETE_FAILED: 'PROD_4008',
+  PRODUCT_SLUG_EXISTS: 'PROD_4009',
+
+  // ========== Orders (5000-5999) ==========
+  ORDER_NOT_FOUND: 'ORDER_5000',        // Your existing
+  ORDER_INVALID_STATUS: 'ORDER_5001',   // Your existing
+  ORDER_CANNOT_CANCEL: 'ORDER_5002',
+  ORDER_PAYMENT_FAILED: 'ORDER_5003',
+  ORDER_EMPTY_CART: 'ORDER_5004',
+  ORDER_INSUFFICIENT_STOCK: 'ORDER_5005',
+  ORDER_ALREADY_CANCELLED: 'ORDER_5006',
+  ORDER_ALREADY_DELIVERED: 'ORDER_5007',
+  ORDER_NOT_OWNER: 'ORDER_5008',
+
+  // ========== Payments (6000-6999) ==========
+  PAY_INITIALIZATION_FAILED: 'PAY_6001',
+  PAY_VERIFICATION_FAILED: 'PAY_6002',
+  PAY_WEBHOOK_SIGNATURE_INVALID: 'PAY_6003',
+  PAY_REFUND_FAILED: 'PAY_6004',
+  PAY_GATEWAY_ERROR: 'PAY_6005',
+  PAY_INSUFFICIENT_FUNDS: 'PAY_6006',
+
+  // ========== Reviews (7000-7999) ==========
+  REVIEW_NOT_FOUND: 'REV_7000',         // Your existing category
+  REVIEW_ALREADY_EXISTS: 'REV_7001',
+  REVIEW_NOT_PURCHASED: 'REV_7002',
+  REVIEW_UNAUTHORIZED: 'REV_7003',
+  REVIEW_ALREADY_HELPFUL: 'REV_7004',
+
+  // ========== Categories (8000-8999) ==========
+  CATEGORY_NOT_FOUND: 'CATE_8000',      // Your existing (renamed from CATE_6000)
+  CATEGORY_CONFLICT: 'CATE_8001',       // Your existing
+  CATEGORY_HAS_CHILDREN: 'CATE_8002',
+  CATEGORY_INVALID_PARENT: 'CATE_8003',
+  CATEGORY_SLUG_EXISTS: 'CATE_8004',
+  CATEGORY_CIRCULAR_REFERENCE: 'CATE_8005',
+  CATEGORY_INVALID_LEVEL: 'CATE_8006',
+
+  // ========== Collections (9000-9999) ==========
+  COLLECTION_NOT_FOUND: 'COLL_9000',    // Your existing (renamed from COLL_8000)
+  COLLECTION_CONFLICT: 'COLL_9001',     // Your existing (renamed from COLL_8001)
+  COLLECTION_UNAUTHORIZED: 'COLL_9002',
+
+  // ========== Cart (10000-10999) ==========
+  CART_ITEM_NOT_FOUND: 'CART_10000',    // Your existing (renamed from CART_9000)
+  CART_EMPTY: 'CART_10001',             // Your existing (renamed from CART_9001)
+  CART_ITEM_INVALID: 'CART_10002',
+
+  // ========== System (11000-11999) ==========
+  VALIDATION_FAILED: 'SYS_11000',       // Your existing (renamed from VAL_FAILED)
+  INVALID_INPUT: 'SYS_11001',           // Your existing (renamed from VAL_INVALID_INPUT)
+  RATE_LIMIT_EXCEEDED: 'SYS_11002',     // Your existing (renamed from RATE_LIMIT_EXCEEDED)
+  INTERNAL_ERROR: 'SYS_11003',          // Your existing (renamed from SRV_INTERNAL)
+  DATABASE_ERROR: 'SYS_11004',          // Your existing (renamed from SRV_DATABASE)
+  QUEUE_ERROR: 'SYS_11005',             // Your existing (renamed from SRV_QUEUE)
+  SYS_FORBIDDEN: 'SYS_11006',
+  SYS_BAD_REQUEST: 'SYS_11007',
+  SYS_NOT_FOUND: 'SYS_11008',
+  SYS_CACHE_ERROR: 'SYS_11009',
 } as const;
+
+// Backward compatibility aliases (so your existing code still works)
+export const ERROR_CODES_LEGACY = {
+  // Your original naming conventions still work
+  EMAIL_CONFL: ERROR_CODES.EMAIL_CONFLICT,
+  USERNAME_CONFL: ERROR_CODES.USERNAME_CONFLICT,
+  USER_FOLLOW_CONFL: ERROR_CODES.USER_FOLLOW_CONFLICT,
+  PROD_CONFL: ERROR_CODES.PRODUCT_CONFLICT,
+  'VEN-7000': ERROR_CODES.VENDOR_NOT_FOUND,
+  'VEN-7001': ERROR_CODES.VENDOR_CONFLICT,
+  CATE_6000: ERROR_CODES.CATEGORY_NOT_FOUND,
+  COLL_8000: ERROR_CODES.COLLECTION_NOT_FOUND,
+  COLL_8001: ERROR_CODES.COLLECTION_CONFLICT,
+  CART_9000: ERROR_CODES.CART_ITEM_NOT_FOUND,
+  CART_9001: ERROR_CODES.CART_EMPTY,
+  VAL_FAILED: ERROR_CODES.VALIDATION_FAILED,
+  VAL_INVALID_INPUT: ERROR_CODES.INVALID_INPUT,
+  RATE_LIMIT_EXCEEDED: ERROR_CODES.RATE_LIMIT_EXCEEDED,
+  SRV_INTERNAL: ERROR_CODES.INTERNAL_ERROR,
+  SRV_DATABASE: ERROR_CODES.DATABASE_ERROR,
+  SRV_QUEUE: ERROR_CODES.QUEUE_ERROR,
+} as const;
+
+export type ErrorCode = typeof ERROR_CODES[keyof typeof ERROR_CODES];

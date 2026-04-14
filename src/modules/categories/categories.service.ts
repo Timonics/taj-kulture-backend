@@ -12,6 +12,10 @@ import { slugify } from '../../shared/utils/slugify';
 import { Category } from 'generated/prisma/client';
 import { ICacheService } from 'src/shared/cache/cache.interface';
 import { CACHE_KEYS } from 'src/core/constants/app.constants';
+import {
+  CategoryConflictException,
+  CategoryNotFoundException,
+} from 'src/core/exceptions';
 
 @Injectable()
 export class CategoriesService {
@@ -43,7 +47,7 @@ export class CategoriesService {
       where: { slug },
     });
     if (existing) {
-      throw new ConflictException('Category with this slug already exists');
+      throw new CategoryConflictException(slug);
     }
 
     // Validate parent if provided
@@ -53,7 +57,7 @@ export class CategoriesService {
         where: { id: parentId },
       });
       if (!parent) {
-        throw new NotFoundException(
+        throw new CategoryNotFoundException(
           `Parent category with id ${parentId} not found`,
         );
       }
@@ -103,7 +107,7 @@ export class CategoriesService {
   async findAll(includeInactive = false) {
     const cacheKey = CACHE_KEYS.ALL_CATEGORIES(includeInactive);
 
-    return this.cache.getOrSet(
+    return this.cache.getOrSet<Category[]>(
       cacheKey,
       async () => {
         return this.prisma.category.findMany({
@@ -161,7 +165,7 @@ export class CategoriesService {
         });
 
         if (!category) {
-          throw new NotFoundException('Category not found');
+          throw new CategoryNotFoundException();
         }
 
         return category;
@@ -202,7 +206,7 @@ export class CategoriesService {
         where: { slug: newSlug },
       });
       if (slugExists && slugExists.id !== id) {
-        throw new ConflictException('Category with this slug already exists');
+        throw new CategoryConflictException(newSlug);
       }
       updateData.slug = newSlug;
     }
@@ -230,7 +234,7 @@ export class CategoriesService {
           where: { id: parentId },
         });
         if (!newParent) {
-          throw new NotFoundException('Parent category not found');
+          throw new CategoryNotFoundException('Parent category not found');
         }
         // Check for circular reference (if newParent is a descendant of current category)
         const descendants = await this.getDescendantIds(id);
@@ -296,12 +300,15 @@ export class CategoriesService {
       include: { children: true },
     });
     if (!category) {
-      throw new NotFoundException('Category not found');
+      throw new CategoryNotFoundException();
     }
 
     // Check if category has children
     if (category.children.length > 0) {
-      throw new ConflictException('Cannot delete category with subcategories');
+      throw new CategoryConflictException(
+        id,
+        'Cannot delete category with subcategories',
+      );
     }
 
     // Optionally, check if any products are assigned
@@ -309,7 +316,10 @@ export class CategoriesService {
       where: { categoryId: id },
     });
     if (productsCount > 0) {
-      throw new ConflictException('Cannot delete category that has products');
+      throw new CategoryConflictException(
+        id,
+        'Cannot delete category that has products',
+      );
     }
 
     await this.cache.deleteByTag(CACHE_KEYS.CATEGORIES());

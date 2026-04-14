@@ -1,22 +1,23 @@
-import {
-  Injectable,
-  NotFoundException,
-  ConflictException,
-  BadRequestException,
-  ForbiddenException,
-  Logger,
-  Inject,
-} from '@nestjs/common';
+import { Injectable, NotFoundException, Logger, Inject } from '@nestjs/common';
 import { PrismaService } from '../../shared/database/prisma.service';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
 import { slugify } from '../../shared/utils/slugify';
-import { User, UserRole, ProductStatus } from 'generated/prisma/client';
+import { User, UserRole } from 'generated/prisma/client';
 import { instanceToPlain } from 'class-transformer';
 import { UploadService } from 'src/shared/upload/upload.service';
 import { ProductResponseDto } from './dto/product-response.dto';
 import { ICacheService } from 'src/shared/cache/cache.interface';
 import { CACHE_KEYS } from 'src/core/constants/app.constants';
+import { EventBus } from 'src/shared/events/event-bus.service';
+import { PRODUCT_EVENTS } from 'src/shared/events/event-types';
+import {
+  ProductConflictException,
+  ProductNotFoundException,
+  UnauthorizedException,
+  CategoryNotFoundException,
+  VendorNotFoundException,
+} from 'src/core/exceptions';
 
 @Injectable()
 export class ProductsService {
@@ -25,19 +26,19 @@ export class ProductsService {
   constructor(
     private prisma: PrismaService,
     private uploadService: UploadService,
+    private eventBus: EventBus,
     @Inject('CACHE_SERVICE') private cache: ICacheService,
   ) {}
 
   // Helper to ensure user has vendor rights
-  private async getVendorFromUser(user: User) {
-    if (user.role === UserRole.ADMIN) {
-      // Admin can act on behalf of any vendor? For simplicity, allow admin to pass vendorId? We'll handle differently.
-      // For now, assume vendor actions require a vendor profile.
+  private async getVendorFromUser(user: User, vendorId?: string) {
+    // Admins can specify any vendor ID, but regular users must have a vendor profile
+    if (user.role === UserRole.ADMIN && vendorId) {
       const vendor = await this.prisma.vendor.findUnique({
-        where: { userId: user.id },
+        where: { id: vendorId },
       });
       if (!vendor) {
-        throw new ForbiddenException('You do not have a vendor profile');
+        throw new VendorNotFoundException(`Vendor with ID ${vendorId} not found`);
       }
       return vendor;
     }
@@ -46,7 +47,7 @@ export class ProductsService {
       where: { userId: user.id },
     });
     if (!vendor) {
-      throw new ForbiddenException('You do not have a vendor profile');
+      throw new VendorNotFoundException('You do not have a vendor profile');
     }
     return vendor;
   }
@@ -79,7 +80,7 @@ export class ProductsService {
       where: { slug },
     });
     if (existing) {
-      throw new ConflictException('Product with this slug already exists');
+      throw new ProductConflictException(slug);
     }
 
     // If categoryId provided, verify existence
@@ -175,7 +176,7 @@ export class ProductsService {
       ]);
 
       // Return created product with all relations
-      return tx.product.findUnique({
+      const createdProduct = await tx.product.findUnique({
         where: { id: product.id },
         include: {
           vendor: true,
@@ -188,13 +189,29 @@ export class ProductsService {
           sizes: true,
         },
       });
+
+      this.eventBus.emit({
+        name: PRODUCT_EVENTS.CREATED,
+        payload: {
+          productId: createdProduct!.id,
+          vendorId: createdProduct!.vendorId,
+          vendorName: createdProduct!.vendor.name,
+          name: createdProduct!.name,
+          slug: createdProduct!.slug,
+          price: createdProduct!.price,
+          categoryId: createdProduct!.categoryId ?? undefined,
+          createdAt: createdProduct!.createdAt,
+        },
+      });
+
+      return createdProduct;
     });
   }
 
   async findAll(query: any) {
     const cacheKey = CACHE_KEYS.PRODUCTS(query);
 
-    return this.cache.getOrSet(
+    return await this.cache.getOrSet(
       cacheKey,
       async () => {
         const {
@@ -210,7 +227,7 @@ export class ProductsService {
           sortBy = 'createdAt',
           sortOrder = 'desc',
         } = query;
-
+            
         const where: any = {};
 
         if (categoryId) where.categoryId = categoryId;
@@ -233,8 +250,10 @@ export class ProductsService {
         // Optionally filter only published products for public endpoints
         // For vendor dashboard, they might want to see drafts etc. We'll handle in controller.
 
+        console.log(where);
+
         const [products, total] = await Promise.all([
-          this.prisma.product.findMany({
+          await this.prisma.product.findMany({
             where,
             include: {
               vendor: {
@@ -260,7 +279,8 @@ export class ProductsService {
         ]);
 
         return {
-          data: products,
+          data:
+            products && products.length > 0 ? products : 'No Products Found',
           meta: { total, page, limit, pages: Math.ceil(total / limit) },
         };
       },
@@ -307,7 +327,7 @@ export class ProductsService {
         });
 
         if (!product) {
-          throw new NotFoundException('Product not found');
+          throw new ProductNotFoundException();
         }
 
         return product;
@@ -319,19 +339,19 @@ export class ProductsService {
     );
   }
 
-  async update(user: User, id: string, updateProductDto: UpdateProductDto) {
-    const vendor = await this.getVendorFromUser(user);
+  async update(user: User, id: string, updateProductDto: UpdateProductDto, vendorId?: string) {
+    const vendor = await this.getVendorFromUser(user, vendorId);
 
     const product = await this.prisma.product.findUnique({
       where: { id },
     });
     if (!product) {
-      throw new NotFoundException('Product not found');
+      throw new ProductNotFoundException();
     }
 
     // Ensure vendor owns this product
     if (product.vendorId !== vendor.id && user.role !== UserRole.ADMIN) {
-      throw new ForbiddenException('You can only update your own products');
+      throw new UnauthorizedException('You can only update your own products');
     }
 
     const {
@@ -354,7 +374,7 @@ export class ProductsService {
         where: { slug: newSlug },
       });
       if (existing) {
-        throw new ConflictException('Product with this slug already exists');
+        throw new ProductConflictException(newSlug);
       }
     }
 
@@ -366,7 +386,7 @@ export class ProductsService {
         where: { slug: finalSlug },
       });
       if (existing && existing.id !== id) {
-        throw new ConflictException('Generated slug already exists');
+        throw new ProductConflictException(finalSlug);
       }
     }
 
@@ -376,7 +396,7 @@ export class ProductsService {
         where: { id: categoryId },
       });
       if (!category) {
-        throw new NotFoundException('Category not found');
+        throw new CategoryNotFoundException();
       }
     }
 
@@ -514,11 +534,11 @@ export class ProductsService {
       include: { images: { select: { key: true } } },
     });
     if (!product) {
-      throw new NotFoundException('Product not found');
+      throw new NotFoundException();
     }
 
     if (product.vendorId !== vendor.id && user.role !== UserRole.ADMIN) {
-      throw new ForbiddenException('You can only delete your own products');
+      throw new UnauthorizedException('You can only delete your own products');
     }
 
     // Delete from DB (cascades to images)
@@ -585,7 +605,7 @@ export class ProductsService {
       select: { id: true },
     });
     if (!vendor) {
-      throw new ForbiddenException('You are not a vendor');
+      throw new UnauthorizedException('You are not a vendor');
     }
     return vendor.id;
   }

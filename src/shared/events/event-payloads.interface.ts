@@ -1,4 +1,19 @@
-// ============ USER EVENT PAYLOADS ============
+/**
+ * EVENT PAYLOADS - Single source of truth for all event data structures
+ * 
+ * WHY SEPARATE FILE:
+ * - Prevents circular imports between event-bus and handlers
+ * - Easier to find and modify payload types
+ * - Can be imported by other modules without pulling in the whole event system
+ * 
+ * NAMING CONVENTION:
+ * - {Domain}{Action}Payload
+ * - Example: UserRegisteredPayload, OrderCreatedPayload
+ */
+
+// ============================================================
+// USER EVENT PAYLOADS
+// ============================================================
 
 export interface UserRegisteredPayload {
   userId: string;
@@ -77,7 +92,30 @@ export interface UserUnfollowedPayload {
   timestamp: Date;
 }
 
-// ============ VENDOR EVENT PAYLOADS ============
+export interface UserWishlistUpdatedPayload {
+  userId: string;
+  productId: string;
+  action: 'added' | 'removed';
+  timestamp: Date;
+}
+
+export interface UserWishlistAddedPayload {
+  userId: string;
+  productId: string;
+  productName: string;
+  timestamp: Date;
+}
+
+export interface UserWishlistRemovedPayload {
+  userId: string;
+  productId: string;
+  productName: string;
+  timestamp: Date;
+}
+
+// ============================================================
+// VENDOR EVENT PAYLOADS
+// ============================================================
 
 export interface VendorRegisteredPayload {
   vendorId: string;
@@ -109,6 +147,7 @@ export interface VendorRejectedPayload {
 
 export interface VendorProductAddedPayload {
   vendorId: string;
+  vendorName: string;
   productId: string;
   productName: string;
   productSlug: string;
@@ -148,7 +187,9 @@ export interface VendorUnfollowedPayload {
   timestamp: Date;
 }
 
-// ============ ORDER EVENT PAYLOADS ============
+// ============================================================
+// ORDER EVENT PAYLOADS
+// ============================================================
 
 export interface OrderCreatedPayload {
   orderId: string;
@@ -178,6 +219,7 @@ export interface OrderPaidPayload {
   paymentMethod: string;
   paymentId: string;
   paidAt: Date;
+  amount: number;
 }
 
 export interface OrderShippedPayload {
@@ -220,7 +262,9 @@ export interface OrderRefundedPayload {
   refundedAt: Date;
 }
 
-// ============ PRODUCT EVENT PAYLOADS ============
+// ============================================================
+// PRODUCT EVENT PAYLOADS
+// ============================================================
 
 export interface ProductCreatedPayload {
   productId: string;
@@ -246,6 +290,12 @@ export interface ProductDeletedPayload {
   deletedAt: Date;
 }
 
+export interface ProductViewedPayload {
+  productId: string;
+  userId?: string;
+  sessionId?: string;
+}
+
 export interface ProductReviewedPayload {
   reviewId: string;
   productId: string;
@@ -257,7 +307,9 @@ export interface ProductReviewedPayload {
   createdAt: Date;
 }
 
-// ============ COLLECTION EVENT PAYLOADS ============
+// ============================================================
+// COLLECTION EVENT PAYLOADS
+// ============================================================
 
 export interface CollectionCreatedPayload {
   collectionId: string;
@@ -282,7 +334,9 @@ export interface CollectionFeaturedPayload {
   updatedBy: string;
 }
 
-// ============ NOTIFICATION PAYLOADS ============
+// ============================================================
+// NOTIFICATION PAYLOADS
+// ============================================================
 
 export interface EmailPayload {
   to: string | string[];
@@ -333,7 +387,9 @@ export interface PushNotificationPayload {
   sound?: string;
 }
 
-// ============ ANALYTICS PAYLOADS ============
+// ============================================================
+// ANALYTICS PAYLOADS
+// ============================================================
 
 export interface PageViewPayload {
   userId?: string;
@@ -372,48 +428,3 @@ export interface ConversionPayload {
   metadata: Record<string, any>;
   timestamp: Date;
 }
-
-// ============ UNION TYPE FOR ALL PAYLOADS ============
-
-export type EventPayload =
-  | UserRegisteredPayload
-  | UserVerifiedPayload
-  | UserLoggedInPayload
-  | UserLoggedOutPayload
-  | UserDeletedPayload
-  | UserProfileUpdatedPayload
-  | UserRoleChangedPayload
-  | PasswordResetRequestedPayload
-  | PasswordChangedPayload
-  | UserFollowedPayload
-  | UserUnfollowedPayload
-  | VendorRegisteredPayload
-  | VendorApprovedPayload
-  | VendorRejectedPayload
-  | VendorProductAddedPayload
-  | VendorProductUpdatedPayload
-  | VendorVerificationUpdatedPayload
-  | VendorProfileUpdatedPayload
-  | VendorFollowedPayload
-  | VendorUnfollowedPayload
-  | OrderCreatedPayload
-  | OrderPaidPayload
-  | OrderShippedPayload
-  | OrderDeliveredPayload
-  | OrderCancelledPayload
-  | OrderRefundedPayload
-  | ProductCreatedPayload
-  | ProductUpdatedPayload
-  | ProductDeletedPayload
-  | ProductReviewedPayload
-  | CollectionCreatedPayload
-  | CollectionUpdatedPayload
-  | CollectionFeaturedPayload
-  | EmailPayload
-  | InAppNotificationPayload
-  | SmsPayload
-  | PushNotificationPayload
-  | PageViewPayload
-  | ProductViewPayload
-  | SearchPayload
-  | ConversionPayload;

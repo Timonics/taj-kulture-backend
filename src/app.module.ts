@@ -1,9 +1,8 @@
 import { Module, NestModule, MiddlewareConsumer } from '@nestjs/common';
-import { ConfigModule, ConfigService } from '@nestjs/config';
 import { ThrottlerModule } from '@nestjs/throttler';
-import { validate } from './config/env.validation';
+import { validate } from './config/env/env.validation';
 import { EmailModule } from './shared/email/email.module';
-import { EventsModule } from './shared/events/events.module';
+import { EventsModule } from './shared/events/event.module';
 import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR, APP_PIPE } from '@nestjs/core';
 import { CustomThrottlerGuard } from './core/guards/throttler.guard';
 import { CorrelationIdMiddleware } from './core/middleware/correlation-id.middleware';
@@ -17,21 +16,32 @@ import { ProductsModule } from './modules/products/products.module';
 import { UploadModule } from './shared/upload/upload.module';
 import { CollectionsModule } from './modules/collections/collections.module';
 import { AllExceptionsFilter } from './core/filters/all-exceptions.filter';
-import { ValidationExceptionFilter } from './core/filters/validation-exception.filter';
-import { LoggingInterceptor } from './core/interceptors/logging.interceptor';
 import { TimeoutInterceptor } from './core/interceptors/timeout.interceptor';
 import { TransformInterceptor } from './core/interceptors/transform.interceptor';
 import { CustomValidationPipe } from './core/pipes/validation.pipe';
 import { LoggingMiddleware } from './core/middleware/logging.middleware';
 import { HelmetMiddleware } from './core/middleware/helmet.middleware';
 import { RedisModule } from './shared/redis/redis.module';
+import { CartModule } from './modules/cart/cart.module';
+import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
+// import { CookieParserMiddleware } from './core/middleware/cookie-parse.middleware';
+import { ReviewsController } from './modules/reviews/reviews.controller';
+import { ReviewsService } from './modules/reviews/reviews.service';
+import { ReviewsModule } from './modules/reviews/reviews.module';
+import { WishlistService } from './modules/wishlist/wishlist.service';
+import { WishlistController } from './modules/wishlist/wishlist.controller';
+import { WishlistModule } from './modules/wishlist/wishlist.module';
+import { AdminModule } from './modules/admin/admin.module';
+// import { AnalyticsController } from './modules/analytics/analytics.controller';
+// import { AnalyticsService } from './modules/analytics/analytics.service';
+import { AnalyticsModule } from './modules/analytics/analytics.module';
+import { RequestContextMiddleware } from './core/middleware/request-context.middleware';
+import { ConfigModule } from './config/config.module';
+import { ConfigService } from '@nestjs/config';
 
 @Module({
   imports: [
-    ConfigModule.forRoot({
-      validate,
-      isGlobal: true,
-    }),
+    ConfigModule,
     ThrottlerModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
@@ -45,18 +55,27 @@ import { RedisModule } from './shared/redis/redis.module';
     EventsModule,
     QueuesModule,
     EmailModule,
-    AuthModule,
-    UsersModule,
+    // AuthModule,
+    // UsersModule,
     DatabaseModule,
-    CategoriesModule,
-    VendorsModule,
-    ProductsModule,
-    UploadModule,
-    CollectionsModule,
+    // CategoriesModule,
+    // VendorsModule,
+    // ProductsModule,
+    // UploadModule,
+    // CollectionsModule,
     RedisModule,
+    // CartModule,
+    // ReviewsModule,
+    // WishlistModule,
+    // AdminModule,
+    // AnalyticsModule,
   ],
   providers: [
     // Global Guards
+    {
+      provide: APP_GUARD,
+      useClass: JwtAuthGuard,
+    },
     {
       provide: APP_GUARD,
       useClass: CustomThrottlerGuard,
@@ -67,13 +86,9 @@ import { RedisModule } from './shared/redis/redis.module';
       provide: APP_INTERCEPTOR,
       useClass: TransformInterceptor,
     },
-    // {
-    //   provide: APP_INTERCEPTOR,
-    //   useClass: TimeoutInterceptor,
-    // },
     {
       provide: APP_INTERCEPTOR,
-      useClass: LoggingInterceptor,
+      useClass: TimeoutInterceptor,
     },
 
     // Global Filters
@@ -81,22 +96,27 @@ import { RedisModule } from './shared/redis/redis.module';
       provide: APP_FILTER,
       useClass: AllExceptionsFilter,
     },
-    {
-      provide: APP_FILTER,
-      useClass: ValidationExceptionFilter,
-    },
 
     // Global Pipes
     {
       provide: APP_PIPE,
       useClass: CustomValidationPipe,
     },
+
+    // AnalyticsService,
   ],
+  // controllers: [AnalyticsController],
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {
     consumer
-      .apply(HelmetMiddleware, CorrelationIdMiddleware, LoggingMiddleware)
+      .apply(
+        HelmetMiddleware,
+        CorrelationIdMiddleware,
+        RequestContextMiddleware,
+        LoggingMiddleware,
+        // CookieParserMiddleware,
+      )
       .forRoutes('*');
   }
 }

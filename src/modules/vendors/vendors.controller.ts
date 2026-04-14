@@ -1,3 +1,28 @@
+// src/modules/vendors/vendors.controller.ts
+/**
+ * VENDORS CONTROLLER
+ *
+ * Handles HTTP requests for vendor management.
+ *
+ * PUBLIC ROUTES:
+ * - GET /vendors – List vendors (filtered, paginated)
+ * - GET /vendors/:slug – Get vendor profile by slug
+ * - GET /vendors/:vendorId/followers – Get followers list
+ *
+ * PROTECTED ROUTES (authenticated):
+ * - POST /vendors/apply – Apply to become a vendor
+ * - GET /vendors/me/profile – Get my vendor profile
+ * - PATCH /vendors/me/profile – Update my vendor profile
+ * - POST /vendors/:vendorId/follow – Follow a vendor
+ * - DELETE /vendors/:vendorId/follow – Unfollow a vendor
+ * - GET /vendors/me/followers – My followers (same as public but filtered)
+ * - GET /vendors/me/following – Vendors I follow
+ *
+ * ADMIN ROUTES:
+ * - PATCH /vendors/admin/:id – Update vendor (verify, feature)
+ * - DELETE /vendors/admin/:id – Delete vendor
+ */
+
 import {
   Controller,
   Get,
@@ -12,99 +37,94 @@ import {
   HttpStatus,
 } from '@nestjs/common';
 import { VendorsService } from './vendors.service';
-import { ApplyVendorDto } from './dto/apply-vendor.dto';
-import { UpdateVendorDto } from './dto/update-vendor.dto';
-import { AdminUpdateVendorDto } from './dto/admin-update-vendor.dto';
+import {
+  ApplyVendorRequestDto,
+  UpdateVendorRequestDto,
+  AdminUpdateVendorRequestDto,
+  VendorQueryRequestDto,
+} from './dto/requests';
+import { VendorResponseDto } from './dto/responses/vendor.response.dto';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../../core/decorators/roles.decorator';
-import { GetUser } from '../../core/decorators/get-user.decorator';
-import { User, UserRole } from 'generated/prisma/client';
-import { VendorResponseDto } from './dto/vendor-response.dto';
-import { JwtAuthGuard } from '../auth/guards/jwt.guard';
-import { Serialize } from 'src/core/interceptors/serialize.interceptor';
+import { CurrentUser } from '../../core/decorators/current-user.decorator';
+import { Public } from '../../core/decorators/public.decorator';
+import { ParseIdPipe } from '../../core/pipes/parse-id.pipe';
+import { Serialize } from '../../core/decorators/serialize.decorator';
+import { User, UserRole } from '../../../generated/prisma/client';
 
 @Controller('vendors')
 @Serialize(VendorResponseDto)
 export class VendorsController {
   constructor(private readonly vendorsService: VendorsService) {}
 
-  // Public: Apply to become a vendor
-  @Post('apply')
-  @UseGuards(JwtAuthGuard)
-  @HttpCode(HttpStatus.CREATED)
-  apply(@GetUser() user: User, @Body() applyVendorDto: ApplyVendorDto) {
-    return this.vendorsService.apply(user, applyVendorDto);
-  }
+  // ========== PUBLIC ROUTES ==========
 
-  // Public: List vendors with filters
+  @Public()
   @Get()
-  findAll(@Query() query: any) {
+  findAll(@Query() query: VendorQueryRequestDto) {
     return this.vendorsService.findAll(query);
   }
 
-  // Public: Get vendor by slug
+  @Public()
   @Get(':slug')
   findOne(@Param('slug') slug: string) {
     return this.vendorsService.findOne(slug);
   }
 
-  // Protected: Get my vendor profile
-  @Get('me/profile')
-  @UseGuards(JwtAuthGuard)
-  getMyVendor(@GetUser() user: User) {
-    return this.vendorsService.findMyVendor(user.id);
-  }
-
-  // Protected: Update my vendor profile
-  @Patch('me/profile')
-  @UseGuards(JwtAuthGuard)
-  updateMyVendor(
-    @GetUser() user: User,
-    @Body() updateVendorDto: UpdateVendorDto,
-  ) {
-    return this.vendorsService.updateMyVendor(user.id, updateVendorDto);
-  }
-
-  // Protected: Follow a vendor
-  @Post(':vendorId/follow')
-  @UseGuards(JwtAuthGuard)
-  follow(@Param('vendorId') vendorId: string, @GetUser() user: User) {
-    return this.vendorsService.follow(vendorId, user.id);
-  }
-
-  // Protected: Unfollow a vendor
-  @Delete(':vendorId/follow')
-  @UseGuards(JwtAuthGuard)
-  unfollow(@Param('vendorId') vendorId: string, @GetUser() user: User) {
-    return this.vendorsService.unfollow(vendorId, user.id);
-  }
-
-  // Public: Get vendor followers
+  @Public()
   @Get(':vendorId/followers')
   getFollowers(
-    @Param('vendorId') vendorId: string,
+    @Param('vendorId', ParseIdPipe) vendorId: string,
     @Query('page') page?: number,
     @Query('limit') limit?: number,
   ) {
     return this.vendorsService.getFollowers(vendorId, page, limit);
   }
 
-  // Admin: Update vendor (verify, feature, etc.)
-  @Patch('admin/:id')
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.ADMIN, UserRole.MODERATOR)
-  adminUpdate(
-    @Param('id') id: string,
-    @Body() adminUpdateDto: AdminUpdateVendorDto,
-  ) {
-    return this.vendorsService.adminUpdate(id, adminUpdateDto);
+  // ========== PROTECTED ROUTES (Vendor Owner) ==========
+
+  @Post('apply')
+  @HttpCode(HttpStatus.CREATED)
+  apply(@CurrentUser() user: User, @Body() dto: ApplyVendorRequestDto) {
+    return this.vendorsService.apply(user, dto);
   }
 
-  // Admin: Delete vendor
+  @Get('me/profile')
+  getMyVendor(@CurrentUser() user: User) {
+    return this.vendorsService.findMyVendor(user.id);
+  }
+
+  @Patch('me/profile')
+  updateMyVendor(@CurrentUser() user: User, @Body() dto: UpdateVendorRequestDto) {
+    return this.vendorsService.updateMyVendor(user.id, dto);
+  }
+
+  @Post(':vendorId/follow')
+  follow(@Param('vendorId', ParseIdPipe) vendorId: string, @CurrentUser() user: User) {
+    return this.vendorsService.follow(vendorId, user.id);
+  }
+
+  @Delete(':vendorId/follow')
+  unfollow(@Param('vendorId', ParseIdPipe) vendorId: string, @CurrentUser() user: User) {
+    return this.vendorsService.unfollow(vendorId, user.id);
+  }
+
+  // ========== ADMIN ROUTES ==========
+
+  @Patch('admin/:id')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.MODERATOR)
+  adminUpdate(
+    @Param('id', ParseIdPipe) id: string,
+    @Body() dto: AdminUpdateVendorRequestDto,
+  ) {
+    return this.vendorsService.adminUpdate(id, dto);
+  }
+
   @Delete('admin/:id')
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(RolesGuard)
   @Roles(UserRole.ADMIN)
-  deleteVendor(@Param('id') id: string) {
+  deleteVendor(@Param('id', ParseIdPipe) id: string) {
     return this.vendorsService.deleteVendor(id);
   }
 }

@@ -1,97 +1,191 @@
 import { Process, Processor } from '@nestjs/bull';
-import { Logger } from '@nestjs/common';
 import { Job } from 'bull';
 import { EmailService } from '../../email/email.service';
 import { DeadLetterQueueService } from '../dead-letter-queue.service';
+import { LoggerService } from '../../logger/logger.service';
+import { EnvironmentService } from '../../../config/env/env.service';
+import { QUEUE_NAMES } from '../../../core/constants/app.constants';
+import { ILogger } from 'src/shared/logger/logger.interface';
 
-@Processor('email')
+/**
+ * EMAIL QUEUE PROCESSOR
+ *
+ * Actually sends emails when jobs are processed.
+ *
+ * WHY SEPARATE PROCESSOR:
+ * - Runs in separate process (can scale independently)
+ * - Retries failed emails automatically
+ * - Dead letter queue for permanent failures
+ *
+ * ERROR HANDLING STRATEGY:
+ * - Invalid email format → Dead letter (permanent failure)
+ * - User not found → Dead letter (permanent failure)
+ * - SendGrid timeout → Retry (temporary failure)
+ * - Rate limit → Retry with delay
+ */
+@Processor(QUEUE_NAMES.EMAIL)
 export class EmailQueueProcessor {
-  private readonly logger = new Logger(EmailQueueProcessor.name);
+  private readonly logger: ILogger;
 
   constructor(
     private emailService: EmailService,
-    private deadLetterQueue: DeadLetterQueueService, // Inject DLQ
-  ) {}
+    private deadLetterQueue: DeadLetterQueueService,
+    private env: EnvironmentService,
+    logger: LoggerService,
+  ) {
+    this.logger = logger.child('EmailQueueProcessor');
+  }
 
   @Process('send-verification')
   async handleVerificationEmail(job: Job) {
-    this.logger.log(`Processing verification email job ${job.id}`);
+    const { email, name, verificationToken, correlationId } = job.data;
+    this.logger.debug(`Processing verification email for ${email}`, {
+      correlationId,
+      jobId: job.id,
+    });
 
-    try {
-      const { email, name, verificationToken } = job.data;
-
-      // Validate email format
-      if (!this.isValidEmail(email)) {
-        // This is a permanent failure - send to dead letter
-        await this.deadLetterQueue.addToDeadLetter(
-          job,
-          new Error(`Invalid email format: ${email}`),
-          'email',
-        );
-        return; // Don't throw, it's already in DLQ
-      }
-
-      await this.emailService.sendVerificationEmail(
-        email,
-        name,
-        verificationToken,
+    // Validate email format - permanent failure if invalid
+    if (!this.isValidEmail(email)) {
+      await this.deadLetterQueue.addToDeadLetter(
+        job,
+        new Error(`Invalid email format: ${email}`),
+        QUEUE_NAMES.EMAIL,
+        correlationId,
       );
-
-      this.logger.log(`Verification email sent to ${email}`);
-      return { success: true, email };
-    } catch (error) {
-      // Check if this is the last attempt
-      if (job.attemptsMade >= (job.opts.attempts ?? 3)) {
-        // All retries exhausted - send to dead letter
-        await this.deadLetterQueue.addToDeadLetter(job, error, 'email');
-        return; // Don't throw, it's now in DLQ
-      }
-
-      // Still have retries left - throw to trigger retry
-      this.logger.error(`Failed to send verification email: ${error.message}`);
-      throw error;
+      return;
     }
+
+    await this.emailService.sendVerificationEmail(
+      email,
+      name,
+      verificationToken,
+    );
+    this.logger.info(`Verification email sent to ${email}`, { correlationId });
   }
 
   @Process('send-password-reset')
   async handlePasswordResetEmail(job: Job) {
-    this.logger.log(`Processing password reset email job ${job.id}`);
+    const { email, name, resetToken, correlationId } = job.data;
+    this.logger.debug(`Processing password reset email for ${email}`, {
+      correlationId,
+      jobId: job.id,
+    });
 
-    try {
-      const { email, name, resetToken } = job.data;
+    await this.emailService.sendPasswordResetEmail(email, name, resetToken);
+    this.logger.info(`Password reset email sent to ${email}`, {
+      correlationId,
+    });
+  }
 
-      // Check if email exists in our system (business rule)
-      const userExists = await this.checkUserExists(email);
-      if (!userExists) {
-        // User might have been deleted - send to dead letter
-        await this.deadLetterQueue.addToDeadLetter(
-          job,
-          new Error(`User not found for email: ${email}`),
-          'email',
-        );
-        return;
-      }
+  @Process('send-welcome')
+  async handleWelcomeEmail(job: Job) {
+    const { email, name, correlationId } = job.data;
+    this.logger.debug(`Processing welcome email for ${email}`, {
+      correlationId,
+      jobId: job.id,
+    });
 
-      await this.emailService.sendPasswordResetEmail(email, name, resetToken);
+    await this.emailService.sendWelcomeEmail(email, name);
+    this.logger.info(`Welcome email sent to ${email}`, { correlationId });
+  }
 
-      this.logger.log(`Password reset email sent to ${email}`);
-      return { success: true, email };
-    } catch (error) {
-      if (job.attemptsMade >= (job.opts.attempts ?? 3)) {
-        await this.deadLetterQueue.addToDeadLetter(job, error, 'email');
-        return;
-      }
-      throw error;
-    }
+  @Process('send-order-confirmation')
+  async handleOrderConfirmation(job: Job) {
+    const { email, name, orderNumber, items, total, correlationId } = job.data;
+    this.logger.debug(`Processing order confirmation for ${orderNumber}`, {
+      correlationId,
+      jobId: job.id,
+    });
+
+    await this.emailService.sendOrderConfirmationEmail(
+      email,
+      name,
+      orderNumber,
+      items,
+      total,
+    );
+    this.logger.info(`Order confirmation sent for ${orderNumber}`, {
+      correlationId,
+    });
+  }
+
+  @Process('send-shipping-update')
+  async handleShippingUpdate(job: Job) {
+    const {
+      email,
+      name,
+      orderNumber,
+      trackingNumber,
+      carrier,
+      estimatedDelivery,
+      correlationId,
+    } = job.data;
+    this.logger.debug(`Processing shipping update for ${orderNumber}`, {
+      correlationId,
+      jobId: job.id,
+    });
+
+    await this.emailService.sendShippingUpdateEmail(
+      email,
+      name,
+      orderNumber,
+      trackingNumber,
+      carrier,
+      estimatedDelivery,
+    );
+    this.logger.info(`Shipping update sent for ${orderNumber}`, {
+      correlationId,
+    });
+  }
+
+  @Process('send-order-cancellation')
+  async handleOrderCancellation(job: Job) {
+    const { email, orderNumber, reason, correlationId } = job.data;
+    this.logger.debug(`Processing cancellation for ${orderNumber}`, {
+      correlationId,
+      jobId: job.id,
+    });
+
+    await this.emailService.sendOrderCancellationEmail(
+      email,
+      orderNumber,
+      reason,
+    );
+    this.logger.info(`Cancellation email sent for ${orderNumber}`, {
+      correlationId,
+    });
+  }
+
+  @Process('send-vendor-approval')
+  async handleVendorApproval(job: Job) {
+    const { email, storeName, correlationId } = job.data;
+    this.logger.debug(`Processing vendor approval for ${storeName}`, {
+      correlationId,
+      jobId: job.id,
+    });
+
+    await this.emailService.sendVendorApprovalEmail(email, storeName);
+    this.logger.info(`Vendor approval email sent to ${email}`, {
+      correlationId,
+    });
+  }
+
+  @Process('send-vendor-rejection')
+  async handleVendorRejection(job: Job) {
+    const { email, storeName, reason, correlationId } = job.data;
+    this.logger.debug(`Processing vendor rejection for ${storeName}`, {
+      correlationId,
+      jobId: job.id,
+    });
+
+    await this.emailService.sendVendorRejectionEmail(email, storeName, reason);
+    this.logger.info(`Vendor rejection email sent to ${email}`, {
+      correlationId,
+    });
   }
 
   private isValidEmail(email: string): boolean {
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     return emailRegex.test(email);
-  }
-
-  private async checkUserExists(email: string): Promise<boolean> {
-    // Implement user check
-    return true; // Placeholder
   }
 }

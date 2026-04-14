@@ -1,37 +1,42 @@
-import { Module } from '@nestjs/common';
-// import { MailerModule } from '@nestjs-modules/mailer';
-// import { HandlebarsAdapter } from '@nestjs-modules/mailer/dist/adapters/handlebars.adapter';
+import { Global, Module, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { EmailService } from './email.service';
 
+/**
+ * EMAIL MODULE
+ *
+ * Handles all email sending using SendGrid with multiple fallback strategies:
+ * 1. SendGrid Dynamic Templates (best - can edit in UI)
+ * 2. Handlebars templates (good - version controlled)
+ * 3. Inline HTML (fallback - always works)
+ *
+ * @Global() - Makes EmailService available everywhere without importing
+ */
+@Global()
 @Module({
-  imports: [
-    // MailerModule.forRootAsync({
-    //   useFactory: (configService: ConfigService) => ({
-    //     transport: {
-    //       host: configService.get('EMAIL_HOST'),
-    //       port: configService.get('EMAIL_PORT'),
-    //       secure: false,
-    //       auth: {
-    //         user: configService.get('EMAIL_USER'),
-    //         pass: configService.get('EMAIL_PASSWORD'),
-    //       },
-    //     },
-    //     defaults: {
-    //       from: configService.get('EMAIL_FROM'),
-    //     },
-    //     template: {
-    //       dir: process.cwd() + '/templates',
-    //       adapter: new HandlebarsAdapter(),
-    //       options: {
-    //         strict: true,
-    //       },
-    //     },
-    //   }),
-    //   inject: [ConfigService],
-    // }),
-  ],
   providers: [EmailService],
   exports: [EmailService],
 })
-export class EmailModule {}
+export class EmailModule implements OnModuleInit {
+  constructor(
+    private emailService: EmailService,
+    private configService: ConfigService,
+  ) {}
+
+  async onModuleInit() {
+    // Validate email configuration on startup
+    const apiKey = this.configService.get('SENDGRID_API_KEY');
+    const fromEmail = this.configService.get('SENDGRID_FROM_EMAIL');
+
+    if (!apiKey) {
+      console.warn('⚠️ SENDGRID_API_KEY not set. Email sending will fail.');
+    }
+
+    if (!fromEmail) {
+      console.warn('⚠️ SENDGRID_FROM_EMAIL not set. Email sending will fail.');
+    }
+
+    // Initialize email service (sets up SendGrid)
+    await this.emailService.onModuleInit();
+  }
+}

@@ -1,116 +1,131 @@
 import { Process, Processor } from '@nestjs/bull';
-import { Logger } from '@nestjs/common';
 import { Job } from 'bull';
 import { PrismaService } from '../../database/prisma.service';
 import { DeadLetterQueueService } from '../dead-letter-queue.service';
+import { ILogger } from '../../logger/logger.interface';
+import { LoggerService } from '../../logger/logger.service';
+import { QUEUE_NAMES } from '../../../core/constants/app.constants';
 
-@Processor('notification')
+/**
+ * NOTIFICATION QUEUE PROCESSOR
+ *
+ * Creates in-app notifications and sends push notifications.
+ *
+ * ERROR HANDLING:
+ * - User not found → Dead letter (permanent failure)
+ * - Database error → Retry
+ * - Push service error → Retry with backoff
+ */
+@Processor(QUEUE_NAMES.NOTIFICATION)
 export class NotificationQueueProcessor {
-  private readonly logger = new Logger(NotificationQueueProcessor.name);
+  private readonly logger: ILogger;
 
   constructor(
     private prisma: PrismaService,
     private deadLetterQueue: DeadLetterQueueService,
-  ) {}
+    logger: LoggerService,
+  ) {
+    this.logger = logger.child('NotificationQueueProcessor');
+  }
 
   @Process('create-in-app')
-  async handleInAppNotification(job: Job) {
-    this.logger.log(`Processing in-app notification job ${job.id}`);
+  async handleInAppNotification(job: Job): Promise<any> {
+    const { userId, title, message, type, data, actionUrl, correlationId } =
+      job.data;
+    this.logger.debug(`Creating in-app notification for user ${userId}`, {
+      correlationId,
+      jobId: job.id,
+    });
 
-    try {
-      const { userId, title, message, type, data } = job.data;
-
-      const user = await this.prisma.user.findUnique({
-        where: { id: userId },
-      });
-
-      if (!user) {
-        // User deleted - permanent failure
-        await this.deadLetterQueue.addToDeadLetter(
-          job,
-          new Error(`User ${userId} not found`),
-          'notification',
-        );
-        return;
-      }
-
-      const notification = await this.prisma.notification.create({
-        data: {
-          userId,
-          title,
-          message,
-          type,
-          data: data || {},
-        },
-      });
-
-      this.logger.log(`In-app notification created for user ${userId}`);
-      return notification;
-    } catch (error) {
-      this.logger.error(
-        `Failed to create in-app notification: ${error.message}`,
+    // Verify user exists – permanent failure if not
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) {
+      await this.deadLetterQueue.addToDeadLetter(
+        job,
+        new Error(`User ${userId} not found`),
+        QUEUE_NAMES.NOTIFICATION,
+        correlationId,
       );
-      throw error;
+      return;
     }
+
+    const notification = await this.prisma.notification.create({
+      data: {
+        userId,
+        title,
+        message,
+        type,
+        data: data || {},
+        // actionUrl,
+      },
+    });
+
+    this.logger.debug(`In-app notification created for user ${userId}`, {
+      correlationId,
+    });
+    return notification;
   }
 
   @Process('create-bulk')
-  async handleBulkNotifications(job: Job) {
-    this.logger.log(
-      `Processing bulk notification job ${job.id}, chunk ${job.data.chunkIndex}`,
+  async handleBulkNotifications(job: Job): Promise<any> {
+    const {
+      userIds,
+      title,
+      message,
+      type,
+      data,
+      actionUrl,
+      chunkIndex,
+      correlationId,
+    } = job.data;
+    this.logger.debug(
+      `Processing bulk notification chunk ${chunkIndex} for ${userIds.length} users`,
+      { correlationId, jobId: job.id },
     );
 
-    try {
-      const { userIds, title, message, type, chunkIndex } = job.data;
+    const result = await this.prisma.notification.createMany({
+      data: userIds.map((userId) => ({
+        userId,
+        title,
+        message,
+        type,
+        data: data || {},
+        actionUrl,
+      })),
+    });
 
-      const result = await this.prisma.notification.createMany({
-        data: userIds.map((userId: string) => ({
-          userId,
-          title,
-          message,
-          type,
-        })),
-      });
-
-      this.logger.log(
-        `Bulk notification chunk ${chunkIndex} created: ${result.count} notifications`,
-      );
-      return result;
-    } catch (error) {
-      this.logger.error(
-        `Failed to create bulk notifications: ${error.message}`,
-      );
-      throw error;
-    }
+    this.logger.debug(
+      `Bulk chunk ${chunkIndex} created: ${result.count} notifications`,
+      { correlationId },
+    );
+    return result;
   }
 
-  // You'd implement push notifications here
-  @Process('send-push')
-  async handlePushNotification(job: Job) {
-    this.logger.log(`Processing push notification job ${job.id}`);
+  // @Process('send-push')
+  // async handlePushNotification(job: Job): Promise<any> {
+  //   const { userId, title, body, data, correlationId } = job.data;
+  //   this.logger.debug(`Sending push notification to user ${userId}`, {
+  //     correlationId,
+  //     jobId: job.id,
+  //   });
 
-    try {
-      const { userId, title, body, data } = job.data;
+  //   // Get user's push token
+  //   const user = await this.prisma.user.findUnique({
+  //     where: { id: userId },
+  //     select: { pushToken: true },
+  //   });
 
-      // Get user's push token from database
-      // const user = await this.prisma.user.findUnique({
-      //   where: { id: userId },
-      //   select: { pushToken: true },
-      // });
+  //   if (!user?.pushToken) {
+  //     this.logger.warn(`No push token for user ${userId}`, { correlationId });
+  //     return { skipped: true, reason: 'no_push_token' };
+  //   }
 
-      // if (!user?.pushToken) {
-      //   this.logger.warn(`No push token for user ${userId}`);
-      //   return { skipped: true, reason: 'no_push_token' };
-      // }
+  //   // Example: Send via Firebase (implement your own push service)
+  //   // await this.pushService.send(user.pushToken, { title, body, data });
 
-      // Send push notification (using Firebase, OneSignal, etc.)
-      // await this.pushService.send(user.pushToken, { title, body, data });
-
-      this.logger.log(`Push notification sent to user ${userId}`);
-      return { success: true, userId };
-    } catch (error) {
-      this.logger.error(`Failed to send push notification: ${error.message}`);
-      throw error;
-    }
-  }
+  //   this.logger.log(`Push notification sent to user ${userId}`, {
+  //     correlationId,
+  //   });
+  //   return { success: true, userId };
+  // }
 }

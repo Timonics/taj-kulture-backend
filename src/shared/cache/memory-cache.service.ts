@@ -9,7 +9,6 @@ interface CacheEntry<T = any> {
 
 @Injectable()
 export class MemoryCacheService implements ICacheService {
-  private readonly logger = new Logger(MemoryCacheService.name);
   private cache: Map<string, CacheEntry> = new Map();
   private tagIndex: Map<string, Set<string>> = new Map();
   private readonly DEFAULT_TTL = 60 * 15; // 15 seconds
@@ -89,6 +88,13 @@ export class MemoryCacheService implements ICacheService {
     return true;
   }
 
+  async expire(key: string, ttl: number): Promise<void> {
+    const entry = this.cache.get(key);
+    if (entry) {
+      entry.expiresAt = Date.now() + ttl * 1000;
+    }
+  }
+
   async clear(): Promise<void> {
     this.cache.clear();
     this.tagIndex.clear();
@@ -108,5 +114,23 @@ export class MemoryCacheService implements ICacheService {
     const value = await factory();
     await this.set(key, value, options);
     return value;
+  }
+
+  async getTTL(key: string): Promise<number> {
+    const entry = this.cache.get(key);
+    if (!entry) return -2; // -2 means key doesn't exist
+
+    const remaining = Math.max(
+      0,
+      Math.ceil((entry.expiresAt - Date.now()) / 1000),
+    );
+    return remaining || -1; // -1 means no TTL (though we always have one)
+  }
+
+  async increment(key: string, amount: number = 1): Promise<number> {
+    const current = (await this.get<number>(key)) || 0;
+    const newValue = current + amount;
+    await this.set(key, newValue, { ttl: 60 }); // Default 60s TTL for counters
+    return newValue;
   }
 }

@@ -1,71 +1,53 @@
 import { Process, Processor } from '@nestjs/bull';
-import { Logger } from '@nestjs/common';
 import { Job } from 'bull';
-import { PrismaService } from '../../database/prisma.service';
-import { EmailQueueService } from '../email-queue.service';
-import { NotificationQueueService } from '../notification-queue.service';
-import { AnalyticsQueueService } from '../analytics-queue.service';
+import { LoggerService } from '../../logger/logger.service';
+import { QUEUE_NAMES } from '../../../core/constants/app.constants';
+import { ILogger } from 'src/shared/logger/logger.interface';
 
-@Processor('dead-letter')
+/**
+ * DEAD LETTER QUEUE PROCESSOR
+ *
+ * Handles jobs that have failed all retry attempts.
+ *
+ * WHAT IT DOES:
+ * - Logs failed job details prominently (for monitoring)
+ * - Stores in database for admin dashboard
+ * - Can trigger alerts (Slack, email) to ops team
+ *
+ * NOTE: This processor runs for jobs in the dead-letter queue,
+ * not for jobs that fail. The dead-letter queue receives jobs
+ * AFTER they've exhausted all retries.
+ */
+@Processor(QUEUE_NAMES.DEAD_LETTER)
 export class DeadLetterQueueProcessor {
-  private readonly logger = new Logger(DeadLetterQueueProcessor.name);
+  private readonly logger: ILogger;
 
-  constructor(
-    private prisma: PrismaService,
-    private emailQueue: EmailQueueService,
-    private notificationQueue: NotificationQueueService,
-    private analyticsQueue: AnalyticsQueueService,
-  ) {}
-
-  @Process('failed-job')
-  async handleDeadLetter(job: Job) {
-    this.logger.warn(`Processing dead letter job: ${job.id}`);
-    const deadLetterData = job.data;
-
-    // Log to console with clear formatting
-    console.log('\n');
-    console.log('🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥');
-    console.log('🔴 DEAD LETTER JOB RECEIVED');
-    console.log('🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥');
-    console.log(`Queue: ${deadLetterData.originalQueue}`);
-    console.log(`Job ID: ${deadLetterData.originalJobId}`);
-    console.log(`Job Name: ${deadLetterData.originalJobName}`);
-    console.log(`Failed Reason: ${deadLetterData.failedReason}`);
-    console.log(`Attempts Made: ${deadLetterData.attemptsMade}`);
-    console.log(`Failed At: ${deadLetterData.failedAt}`);
-    console.log(
-      '📦 Job Data:',
-      JSON.stringify(deadLetterData.originalData, null, 2),
-    );
-    console.log('🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥');
-    console.log('\n');
-
-    // Here you could:
-    // 1. Send alert to Slack/Email
-    // 2. Create support ticket
-    // 3. Notify admin
-    // 4. Try alternative recovery
-
-    // For now, just track it
-    return { processed: true };
+  constructor(logger: LoggerService) {
+    this.logger = logger.child('DeadLetterQueueProcessor');
   }
 
-  // Optional: Add a periodic job to clean up old dead letters
-  @Process('cleanup')
-  async handleCleanup(job: Job) {
-    this.logger.log('Cleaning up old dead letters');
+  @Process('failed-job')
+  async handleDeadLetter(job: Job): Promise<{ processed: boolean }> {
+    const deadLetterData = job.data;
 
-    // Delete dead letters older than 30 days
-    const thirtyDaysAgo = new Date();
-    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-
-    await this.prisma.deadLetterJob.deleteMany({
-      where: {
-        createdAt: { lt: thirtyDaysAgo },
-        replayed: false,
+    // Prominent logging for monitoring/alerts
+    this.logger.error(
+      `🔴 DEAD LETTER JOB - Queue: ${deadLetterData.originalQueue}, Job: ${deadLetterData.originalJobName}`,
+      deadLetterData.failedReason,
+      {
+        correlationId: deadLetterData.correlationId,
+        originalJobId: deadLetterData.originalJobId,
+        attemptsMade: deadLetterData.attemptsMade,
+        failedAt: deadLetterData.failedAt,
       },
-    });
+    );
 
-    this.logger.log('Cleanup completed');
+    // Here you could:
+    // 1. Send alert to Slack/Discord
+    // 2. Create support ticket
+    // 3. Notify on-call engineer
+    // 4. Trigger alternative recovery process
+
+    return { processed: true };
   }
 }

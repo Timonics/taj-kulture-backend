@@ -1,10 +1,17 @@
-import { Module } from '@nestjs/common';
+/**
+ * UPLOAD MODULE
+ *
+ * Provides file upload capabilities using AWS S3.
+ *
+ * @Global() - Makes UploadService available throughout the app
+ */
+
+import { Global, Module } from '@nestjs/common';
 import { UploadService } from './upload.service';
 import { UploadController } from './upload.controller';
-import { ConfigModule } from '@nestjs/config';
 
+@Global()
 @Module({
-  imports: [ConfigModule],
   providers: [UploadService],
   controllers: [UploadController],
   exports: [UploadService],

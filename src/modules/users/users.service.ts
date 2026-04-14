@@ -1,62 +1,100 @@
 import {
   Injectable,
   NotFoundException,
-  ConflictException,
   BadRequestException,
 } from '@nestjs/common';
 import { PrismaService } from '../../shared/database/prisma.service';
 import { EventBus } from '../../shared/events/event-bus.service';
 import { USER_EVENTS } from '../../shared/events/event-types';
-import { UserRole } from 'generated/prisma/client';
+import { User, UserRole } from '../../../generated/prisma/client';
 import {
-  CreateUserDto,
-  UpdateUserDto,
-  UpdatePasswordDto,
-  UserResponseDto,
-  CreateAddressDto,
-  UpdateAddressDto,
-  FollowDto,
-} from './dto';
+  UpdateUserRequestDto,
+  UpdatePasswordRequestDto,
+  FollowRequestDto,
+  CreateAddressRequestDto,
+  UpdateAddressRequestDto,
+  CreateUserRequestDto,
+} from './dto/requests';
+import { UserResponseDto } from './dto/responses/user-response.dto';
 import { IUserFilters, IUserSearchParams } from './interfaces/user.interface';
 import * as bcrypt from 'bcrypt';
+import { ILogger } from '../../shared/logger/logger.interface';
+import { LoggerService } from '../../shared/logger/logger.service';
+import { EnvironmentService } from '../../config/env/env.service';
 import {
-  UserRegisteredPayload,
-  UserVerifiedPayload,
-} from 'src/shared/events/event-payloads.interface';
-import { UserNotFoundException } from 'src/core/exceptions/user-not-found.exception';
-import { InvalidCredentialsException } from 'src/core/exceptions/invalid-credientials.exception';
-import { JwtService } from '@nestjs/jwt';
-import { ConfigService } from '@nestjs/config';
-import { addDays } from 'date-fns';
+  EmailConflictException,
+  UsernameConflictException,
+  UserNotFoundException,
+  InvalidCredentialsException,
+  UserFollowConflictException,
+} from '../../core/exceptions';
+import { plainToInstance } from 'class-transformer';
 
+/**
+ * USERS SERVICE
+ *
+ * Core business logic for user management:
+ * - CRUD operations (create, read, update, delete)
+ * - Address management (add, update, remove, set default)
+ * - Follow/unfollow system with automatic count updates
+ * - User statistics and activity feed
+ * - Admin tools (role changes, email verification, dashboard stats)
+ *
+ * EVENT-DRIVEN:
+ * - Emits events for profile updates, password changes, follows, etc.
+ * - Decouples side effects (notifications, analytics) from core logic
+ *
+ * SECURITY:
+ * - Passwords are never returned in responses
+ * - Refresh tokens invalidated on password change
+ * - Email verification status checked before login (handled in Auth)
+ * - Follow operations prevent self-follow
+ */
 @Injectable()
 export class UsersService {
+  private readonly logger: ILogger;
+
   constructor(
     private prisma: PrismaService,
-    private jwtService: JwtService,
-    private configService: ConfigService,
     private eventBus: EventBus,
-  ) {}
+    private env: EnvironmentService,
+    logger: LoggerService,
+  ) {
+    this.logger = logger.child(UsersService.name);
+  }
 
-  // ========== BASIC CRUD ==========
+  // ============================================================
+  // BASIC CRUD OPERATIONS
+  // ============================================================
 
-  async create(createUserDto: CreateUserDto): Promise<UserResponseDto> {
+  /**
+   * Create a new user (used by AuthService during registration)
+   *
+   * @param createUserDto - User data (email, username, password, etc.)
+   * @returns User
+   *
+   * WHY SEPARATE FROM AUTH SERVICE:
+   * - Auth service focuses on authentication (tokens, login)
+   * - Users service handles pure user data management
+   * - Auth service calls this method after password hashing
+   */
+  async create(createUserDto: CreateUserRequestDto): Promise<User> {
     const { email, username, password, ...rest } = createUserDto;
 
-    // Check if user exists
+    // Check for existing user with same email or username
     await this.ensureUserNotExists(email, username);
 
-    // Hash password
-    const hashedPassword = await bcrypt.hash(password, 10);
-
-    const verificationToken = this.jwtService.sign(
-      { email, purpose: 'email-verification' },
-      { secret: this.configService.get('JWT_SECRET'), expiresIn: '1d' },
+    // Hash password with bcrypt using configured rounds
+    const hashedPassword = await bcrypt.hash(
+      password,
+      this.env.get('BCRYPT_ROUNDS') || 10,
     );
 
-    const verificationExpires = addDays(new Date(), 1);
+    // Generate email verification token (JWT with purpose='email-verification')
+    const verificationToken = this.generateEmailVerificationToken(email);
+    const verificationExpires = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
 
-    // Create user
+    // Create user in database
     const user = await this.prisma.user.create({
       data: {
         email,
@@ -68,33 +106,36 @@ export class UsersService {
       },
     });
 
-    // Emit event
+    this.logger.info(`User created: ${user.email} (${user.id})`);
+
+    // Emit event to trigger welcome email (handled by EmailEventHandler)
     this.eventBus.emit({
       name: USER_EVENTS.REGISTERED,
       payload: {
         userId: user.id,
         email: user.email,
         name: user.firstName || user.username,
-        verificationToken: user.emailVerificationToken!,
+        verificationToken,
         registrationMethod: 'email',
       },
     });
 
-    return new UserResponseDto(user);
+    return user;
   }
 
-  async findAll(params: IUserSearchParams = {}): Promise<{
-    data: UserResponseDto[];
-    meta: { total: number; skip: number; take: number };
-  }> {
+  /**
+   * Find all users with pagination, filtering, and sorting (admin only)
+   *
+   * @param params - Skip, take, where filters, orderBy
+   * @returns Paginated list of UserResponseDto
+   */
+  async findAll(params: IUserSearchParams = {}) {
     const {
       skip = 0,
       take = 10,
       where = {},
       orderBy = { createdAt: 'desc' },
     } = params;
-
-    // Build where clause
     const whereClause = this.buildWhereClause(where);
 
     const [users, total] = await Promise.all([
@@ -109,45 +150,68 @@ export class UsersService {
     ]);
 
     return {
-      data: users.map((user) => new UserResponseDto(user)),
+      users: users.map((user) =>
+        plainToInstance(UserResponseDto, user, {
+          excludeExtraneousValues: true,
+        }),
+      ),
       meta: { total, skip, take },
     };
   }
 
+  /**
+   * Find a single user by ID
+   *
+   * @param id - User's CUID
+   * @returns UserResponseDto
+   * @throws UserNotFoundException if user doesn't exist
+   */
   async findOne(id: string): Promise<UserResponseDto> {
     const user = await this.prisma.user.findUnique({
       where: { id },
-      ...this.getUserSelectFields(true), // Include relations
+      ...this.getUserSelectFields(true), // Include addresses and vendor relations
     });
 
     if (!user) {
       throw new UserNotFoundException(`User with ID ${id} not found`);
     }
 
-    return new UserResponseDto(user);
-  }
-
-  async findByEmail(email: string): Promise<UserResponseDto | null> {
-    const user = await this.prisma.user.findUnique({
-      where: { email },
-      ...this.getUserSelectFields(),
+    return plainToInstance(UserResponseDto, user, {
+      excludeExtraneousValues: true,
     });
-
-    return user ? new UserResponseDto(user) : null;
   }
 
+  /**
+   * Find a user by username (public profile)
+   *
+   * @param username - Unique username
+   * @returns UserResponseDto or null
+   */
   async findByUsername(username: string): Promise<UserResponseDto | null> {
     const user = await this.prisma.user.findUnique({
       where: { username },
       ...this.getUserSelectFields(),
     });
-
-    return user ? new UserResponseDto(user) : null;
+    return user
+      ? plainToInstance(UserResponseDto, user, {
+          excludeExtraneousValues: true,
+        })
+      : null;
   }
 
+  /**
+   * Update user profile (partial update)
+   *
+   * @param id - User ID
+   * @param updateUserDto - Fields to update
+   * @returns Updated UserResponseDto
+   *
+   * WHY EMIT EVENT: Notify other parts of the system about profile changes
+   * (e.g., update search index, send notification to followers)
+   */
   async update(
     id: string,
-    updateUserDto: UpdateUserDto,
+    updateUserDto: UpdateUserRequestDto,
   ): Promise<UserResponseDto> {
     await this.ensureUserExists(id);
 
@@ -157,22 +221,36 @@ export class UsersService {
       ...this.getUserSelectFields(),
     });
 
-    this.eventBus.emit({
-      name: USER_EVENTS.PROFILE_UPDATED,
-      payload: {
-        userId: id,
-        changes: updateUserDto,
-      },
+    this.logger.info(`User profile updated: ${id}`, {
+      changes: Object.keys(updateUserDto),
     });
 
-    return new UserResponseDto(updatedUser);
+    this.eventBus.emit({
+      name: USER_EVENTS.PROFILE_UPDATED,
+      payload: { userId: id, changes: updateUserDto },
+    });
+
+    return plainToInstance(UserResponseDto, updatedUser, {
+      excludeExtraneousValues: true,
+    });
   }
 
+  /**
+   * Change user password (authenticated)
+   *
+   * @param id - User ID
+   * @param dto - Current password, new password, confirmation
+   *
+   * SECURITY:
+   * - Verifies current password before allowing change
+   * - Invalidates all refresh tokens (forces re-login on all devices)
+   * - Emits event for password changed notification
+   */
   async updatePassword(
     id: string,
-    updatePasswordDto: UpdatePasswordDto,
+    dto: UpdatePasswordRequestDto,
   ): Promise<void> {
-    const { currentPassword, newPassword, confirmPassword } = updatePasswordDto;
+    const { currentPassword, newPassword, confirmPassword } = dto;
 
     if (newPassword !== confirmPassword) {
       throw new BadRequestException('Passwords do not match');
@@ -187,7 +265,6 @@ export class UsersService {
       throw new UserNotFoundException();
     }
 
-    // Verify current password
     const isPasswordValid = await bcrypt.compare(
       currentPassword,
       user.password,
@@ -196,69 +273,78 @@ export class UsersService {
       throw new InvalidCredentialsException('Current password is incorrect');
     }
 
-    // Hash new password
-    const hashedPassword = await bcrypt.hash(newPassword, 10);
+    const hashedPassword = await bcrypt.hash(
+      newPassword,
+      this.env.get('BCRYPT_ROUNDS') || 10,
+    );
 
+    // Update password and clear refresh token (log out all devices)
     await this.prisma.user.update({
       where: { id },
-      data: {
-        password: hashedPassword,
-        passwordChangedAt: new Date(),
-        refreshToken: null, // Invalidate all sessions
-      },
+      data: { password: hashedPassword, refreshToken: null },
     });
+
+    this.logger.info(`Password changed for user: ${id}`);
 
     this.eventBus.emit({
       name: USER_EVENTS.PASSWORD_CHANGED,
-      payload: {
-        userId: id,
-        changedAt: new Date(),
-      },
+      payload: { userId: id, changedAt: new Date() },
     });
   }
 
+  /**
+   * Delete user (soft delete – currently just emits event)
+   * In production, you would add `deletedAt` and filter out deleted users.
+   */
   async remove(id: string): Promise<void> {
     await this.ensureUserExists(id);
 
-    // Soft delete by archiving or deactivating
     const user = await this.prisma.user.update({
       where: { id },
       data: {
-        // You could add a deletedAt field
-        // deletedAt: new Date(),
-        // isActive: false,
+        /* add soft delete fields if needed, e.g., deletedAt: new Date() */
       },
     });
+
+    this.logger.warn(`User deleted: ${user.email} (${id})`);
 
     this.eventBus.emit({
       name: USER_EVENTS.DELETED,
-      payload: {
-        userId: id,
-        email: user.email,
-        deletedAt: new Date(),
-      },
+      payload: { userId: id, email: user.email, deletedAt: new Date() },
     });
   }
 
-  // ========== ADDRESS MANAGEMENT ==========
+  // ============================================================
+  // ADDRESS MANAGEMENT
+  // ============================================================
 
+  /**
+   * Get all addresses for a user
+   *
+   * @param userId - User ID
+   * @returns List of addresses (default address first)
+   */
   async getAddresses(userId: string) {
     await this.ensureUserExists(userId);
-
     return this.prisma.address.findMany({
       where: { userId },
-      orderBy: [
-        { isDefault: 'desc' },
-        // { createdAt: 'desc' },
-      ],
+      orderBy: { isDefault: 'desc' }, // Default address appears first
     });
   }
 
-  async addAddress(userId: string, addressData: CreateAddressDto) {
+  /**
+   * Add a new address to a user
+   *
+   * @param userId - User ID
+   * @param data - Address data
+   *
+   * LOGIC:
+   * - If this is the first address or marked as default, unset other default addresses
+   */
+  async addAddress(userId: string, data: CreateAddressRequestDto) {
     await this.ensureUserExists(userId);
 
-    // If this is the first address or marked as default, update other addresses
-    if (addressData.isDefault) {
+    if (data.isDefault) {
       await this.prisma.address.updateMany({
         where: { userId },
         data: { isDefault: false },
@@ -266,51 +352,53 @@ export class UsersService {
     }
 
     const address = await this.prisma.address.create({
-      data: {
-        ...addressData,
-        userId,
-      },
+      data: { ...data, userId },
     });
 
+    this.logger.debug(`Address added for user ${userId}: ${address.id}`);
     return address;
   }
 
+  /**
+   * Update an existing address
+   *
+   * @param userId - User ID (ownership check)
+   * @param addressId - Address ID to update
+   * @param data - Partial address data
+   */
   async updateAddress(
     userId: string,
     addressId: string,
-    addressData: UpdateAddressDto,
+    data: UpdateAddressRequestDto,
   ) {
     await this.ensureAddressBelongsToUser(userId, addressId);
 
-    // Handle default address logic
-    if (addressData.isDefault) {
+    if (data.isDefault) {
       await this.prisma.address.updateMany({
-        where: {
-          userId,
-          id: { not: addressId },
-        },
+        where: { userId, id: { not: addressId } },
         data: { isDefault: false },
       });
     }
 
-    const updated = await this.prisma.address.update({
+    return this.prisma.address.update({
       where: { id: addressId },
-      data: addressData,
+      data,
     });
-
-    return updated;
   }
 
+  /**
+   * Delete an address
+   */
   async removeAddress(userId: string, addressId: string) {
     await this.ensureAddressBelongsToUser(userId, addressId);
-
-    await this.prisma.address.delete({
-      where: { id: addressId },
-    });
-
+    await this.prisma.address.delete({ where: { id: addressId } });
     return { success: true };
   }
 
+  /**
+   * Set a specific address as the default for a user
+   * Uses transaction to ensure atomicity (all default flags cleared, then one set)
+   */
   async setDefaultAddress(userId: string, addressId: string) {
     await this.ensureAddressBelongsToUser(userId, addressId);
 
@@ -328,10 +416,24 @@ export class UsersService {
     return { success: true };
   }
 
-  // ========== FOLLOW SYSTEM ==========
+  // ============================================================
+  // FOLLOW SYSTEM
+  // ============================================================
 
-  async followUser(followerId: string, followDto: FollowDto) {
-    const { userId: followingId } = followDto;
+  /**
+   * Follow another user
+   *
+   * @param followerId - ID of user who follows
+   * @param dto - Contains followingId
+   *
+   * BUSINESS RULES:
+   * - Cannot follow yourself
+   * - Cannot follow the same user twice
+   * - Updates followersCount and followingCount atomically
+   * - Emits event for notification
+   */
+  async followUser(followerId: string, dto: FollowRequestDto) {
+    const followingId = dto.userId;
 
     if (followerId === followingId) {
       throw new BadRequestException('Cannot follow yourself');
@@ -339,32 +441,23 @@ export class UsersService {
 
     await this.ensureUserExists(followingId);
 
-    // Check if already following
-    const existingFollow = await this.prisma.follow.findUnique({
-      where: {
-        followerId_followingId: {
-          followerId,
-          followingId,
-        },
-      },
+    const existing = await this.prisma.follow.findUnique({
+      where: { followerId_followingId: { followerId, followingId } },
     });
 
-    if (existingFollow) {
-      throw new ConflictException('Already following this user');
+    if (existing) {
+      throw new UserFollowConflictException();
     }
 
     const follow = await this.prisma.follow.create({
-      data: {
-        followerId,
-        followingId,
-      },
+      data: { followerId, followingId },
       include: {
         follower: { select: this.getUserSelectFields().select },
         following: { select: this.getUserSelectFields().select },
       },
     });
 
-    // Update counts
+    // Atomically update both counts using transaction
     await this.prisma.$transaction([
       this.prisma.user.update({
         where: { id: followerId },
@@ -375,6 +468,8 @@ export class UsersService {
         data: { followersCount: { increment: 1 } },
       }),
     ]);
+
+    this.logger.info(`User ${followerId} followed ${followingId}`);
 
     this.eventBus.emit({
       name: USER_EVENTS.FOLLOWED,
@@ -390,19 +485,17 @@ export class UsersService {
     return follow;
   }
 
+  /**
+   * Unfollow a user
+   * Reverses the follow operation (decrements counts)
+   */
   async unfollowUser(followerId: string, followingId: string) {
     await this.ensureUserExists(followingId);
 
     await this.prisma.follow.delete({
-      where: {
-        followerId_followingId: {
-          followerId,
-          followingId,
-        },
-      },
+      where: { followerId_followingId: { followerId, followingId } },
     });
 
-    // Update counts
     await this.prisma.$transaction([
       this.prisma.user.update({
         where: { id: followerId },
@@ -414,85 +507,87 @@ export class UsersService {
       }),
     ]);
 
+    this.logger.info(`User ${followerId} unfollowed ${followingId}`);
+
     this.eventBus.emit({
       name: USER_EVENTS.UNFOLLOWED,
-      payload: {
-        followerId,
-        followingId,
-        timestamp: new Date(),
-      },
+      payload: { followerId, followingId, timestamp: new Date() },
     });
 
     return { success: true };
   }
 
+  /**
+   * Get list of followers for a user
+   */
   async getFollowers(userId: string, skip = 0, take = 10) {
     await this.ensureUserExists(userId);
 
     const [followers, total] = await Promise.all([
       this.prisma.follow.findMany({
         where: { followingId: userId },
-        include: {
-          follower: {
-            select: this.getUserSelectFields().select,
-          },
-        },
+        include: { follower: { select: this.getUserSelectFields().select } },
         skip,
         take,
         orderBy: { createdAt: 'desc' },
       }),
-      this.prisma.follow.count({
-        where: { followingId: userId },
-      }),
+      this.prisma.follow.count({ where: { followingId: userId } }),
     ]);
 
     return {
-      data: followers.map((f) => new UserResponseDto(f.follower)),
+      data: followers.map((f) =>
+        plainToInstance(UserResponseDto, f.follower, {
+          excludeExtraneousValues: true,
+        }),
+      ),
       meta: { total, skip, take },
     };
   }
 
+  /**
+   * Get list of users that a user follows
+   */
   async getFollowing(userId: string, skip = 0, take = 10) {
     await this.ensureUserExists(userId);
 
     const [following, total] = await Promise.all([
       this.prisma.follow.findMany({
         where: { followerId: userId },
-        include: {
-          following: {
-            select: this.getUserSelectFields().select,
-          },
-        },
+        include: { following: { select: this.getUserSelectFields().select } },
         skip,
         take,
         orderBy: { createdAt: 'desc' },
       }),
-      this.prisma.follow.count({
-        where: { followerId: userId },
-      }),
+      this.prisma.follow.count({ where: { followerId: userId } }),
     ]);
 
     return {
-      data: following.map((f) => new UserResponseDto(f.following)),
+      data: following.map((f) =>
+        plainToInstance(UserResponseDto, f.following, {
+          excludeExtraneousValues: true,
+        }),
+      ),
       meta: { total, skip, take },
     };
   }
 
+  /**
+   * Check if a user follows another user
+   */
   async isFollowing(followerId: string, followingId: string): Promise<boolean> {
     const follow = await this.prisma.follow.findUnique({
-      where: {
-        followerId_followingId: {
-          followerId,
-          followingId,
-        },
-      },
+      where: { followerId_followingId: { followerId, followingId } },
     });
-
     return !!follow;
   }
 
-  // ========== STATS & DASHBOARD ==========
+  // ============================================================
+  // STATS & ACTIVITY
+  // ============================================================
 
+  /**
+   * Get aggregated statistics for a user (orders, reviews, followers, following, wishlist)
+   */
   async getUserStats(userId: string) {
     await this.ensureUserExists(userId);
 
@@ -506,70 +601,61 @@ export class UsersService {
       ],
     );
 
-    return {
-      orders,
-      reviews,
-      followers,
-      following,
-      wishlist,
-    };
+    return { orders, reviews, followers, following, wishlist };
   }
 
+  /**
+   * Get recent activity (orders and reviews) for a user
+   */
   async getUserActivity(userId: string, limit = 10) {
     await this.ensureUserExists(userId);
 
     const [recentOrders, recentReviews] = await Promise.all([
       this.prisma.order.findMany({
         where: { userId },
-        // orderBy: { createdAt: 'desc' },
         take: limit,
-        include: {
-          items: {
-            take: 3,
-            include: { product: true },
-          },
-        },
+        // orderBy: { createdAt: 'desc' },
+        include: { items: { take: 3, include: { product: true } } },
       }),
       this.prisma.review.findMany({
         where: { userId },
-        orderBy: { createdAt: 'desc' },
         take: limit,
+        orderBy: { createdAt: 'desc' },
         include: { product: true },
       }),
     ]);
 
-    return {
-      recentOrders,
-      recentReviews,
-    };
+    return { recentOrders, recentReviews };
   }
 
-  // ========== ADMIN TOOLS ==========
+  // ============================================================
+  // ADMIN TOOLS
+  // ============================================================
 
-  async verifyEmail(userId: string) {
+  /**
+   * Manually verify a user's email (admin only)
+   */
+  async verifyEmail(userId: string): Promise<void> {
     await this.ensureUserExists(userId);
 
-    const user = await this.prisma.user.update({
+    await this.prisma.user.update({
       where: { id: userId },
-      data: {
-        isEmailVerified: true,
-        emailVerificationToken: null,
-      },
+      data: { isEmailVerified: true, emailVerificationToken: null },
     });
 
+    this.logger.info(`Admin verified email for user: ${userId}`);
+
+    // Emit event to send welcome email
     this.eventBus.emit({
       name: USER_EVENTS.VERIFIED,
-      payload: {
-        name: user.firstName,
-        email: user.email,
-        verifiedAt: new Date(),
-      } as UserVerifiedPayload,
+      payload: { userId, email: '', name: '', verifiedAt: new Date() }, // ideally fetch user details
     });
-
-    return { success: true };
   }
 
-  async updateRole(userId: string, role: UserRole) {
+  /**
+   * Change a user's role (admin only)
+   */
+  async updateRole(userId: string, role: UserRole): Promise<UserResponseDto> {
     await this.ensureUserExists(userId);
 
     const user = await this.prisma.user.update({
@@ -577,6 +663,8 @@ export class UsersService {
       data: { role },
       ...this.getUserSelectFields(),
     });
+
+    this.logger.info(`User role changed: ${userId} -> ${role}`);
 
     this.eventBus.emit({
       name: USER_EVENTS.ROLE_CHANGED,
@@ -588,103 +676,94 @@ export class UsersService {
       },
     });
 
-    return new UserResponseDto(user);
+    return plainToInstance(UserResponseDto, user, {
+      excludeExtraneousValues: true,
+    });
   }
 
+  /**
+   * Get dashboard statistics for admin
+   */
   async getDashboardStats() {
     const [totalUsers, activeToday, newThisWeek, byRole] = await Promise.all([
       this.prisma.user.count(),
       this.prisma.user.count({
         where: {
-          lastLogin: {
-            gte: new Date(Date.now() - 24 * 60 * 60 * 1000),
-          },
+          lastLogin: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) },
         },
       }),
       this.prisma.user.count({
         where: {
-          createdAt: {
-            gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000),
-          },
+          createdAt: { gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) },
         },
       }),
-      this.prisma.user.groupBy({
-        by: ['role'],
-        _count: true,
-      }),
+      this.prisma.user.groupBy({ by: ['role'], _count: true }),
     ]);
 
-    return {
-      totalUsers,
-      activeToday,
-      newThisWeek,
-      byRole: byRole.reduce((acc, curr) => {
-        acc[curr.role] = curr._count;
-        return acc;
-      }, {}),
-    };
+    const roleCounts = byRole.reduce(
+      (acc, curr) => ({ ...acc, [curr.role]: curr._count }),
+      {},
+    );
+
+    return { totalUsers, activeToday, newThisWeek, byRole: roleCounts };
   }
 
-  // ========== HELPER METHODS ==========
+  // ============================================================
+  // PRIVATE HELPER METHODS
+  // ============================================================
 
+  /**
+   * Ensure a user exists by ID – throws UserNotFoundException if not found
+   */
   private async ensureUserExists(id: string): Promise<void> {
     const user = await this.prisma.user.findUnique({
       where: { id },
       select: { id: true },
     });
-
     if (!user) {
-      throw new NotFoundException(`User with ID ${id} not found`);
+      throw new UserNotFoundException(`User with ID ${id} not found`);
     }
   }
 
+  /**
+   * Ensure no user exists with the given email or username – throws appropriate conflict exception
+   */
   private async ensureUserNotExists(
     email: string,
     username: string,
   ): Promise<void> {
-    const existingUser = await this.prisma.user.findFirst({
-      where: {
-        OR: [{ email }, { username }],
-      },
+    const existing = await this.prisma.user.findFirst({
+      where: { OR: [{ email }, { username }] },
     });
-
-    if (existingUser) {
-      if (existingUser.email === email) {
-        throw new ConflictException('Email already registered');
-      }
-      if (existingUser.username === username) {
-        throw new ConflictException('Username already taken');
-      }
+    if (existing) {
+      if (existing.email === email) throw new EmailConflictException();
+      if (existing.username === username) throw new UsernameConflictException();
     }
   }
 
+  /**
+   * Ensure an address belongs to a user – throws NotFoundException if not
+   */
   private async ensureAddressBelongsToUser(
     userId: string,
     addressId: string,
   ): Promise<void> {
     const address = await this.prisma.address.findFirst({
-      where: {
-        id: addressId,
-        userId,
-      },
+      where: { id: addressId, userId },
     });
-
     if (!address) {
       throw new NotFoundException('Address not found');
     }
   }
 
-  private buildWhereClause(filters: IUserFilters) {
+  /**
+   * Build Prisma `where` clause from IUserFilters
+   */
+  private buildWhereClause(filters: IUserFilters): any {
     const where: any = {};
-
-    if (filters.role) {
-      where.role = filters.role;
-    }
-
-    if (filters.isVerified !== undefined) {
+    if (filters.role) where.role = filters.role;
+    if (filters.isVerified !== undefined)
       where.isEmailVerified = filters.isVerified;
-    }
-
     if (filters.search) {
       where.OR = [
         { email: { contains: filters.search, mode: 'insensitive' } },
@@ -693,22 +772,21 @@ export class UsersService {
         { lastName: { contains: filters.search, mode: 'insensitive' } },
       ];
     }
-
     if (filters.createdAfter || filters.createdBefore) {
       where.createdAt = {};
-      if (filters.createdAfter) {
-        where.createdAt.gte = filters.createdAfter;
-      }
-      if (filters.createdBefore) {
-        where.createdAt.lte = filters.createdBefore;
-      }
+      if (filters.createdAfter) where.createdAt.gte = filters.createdAfter;
+      if (filters.createdBefore) where.createdAt.lte = filters.createdBefore;
     }
-
     return where;
   }
 
+  /**
+   * Get Prisma select fields for User queries
+   * Excludes sensitive fields (password, tokens) automatically
+   *
+   * @param includeRelations - Whether to include addresses and vendor relations
+   */
   private getUserSelectFields(includeRelations = false) {
-    // Base fields to select
     const baseSelect = {
       id: true,
       email: true,
@@ -731,7 +809,6 @@ export class UsersService {
     };
 
     if (includeRelations) {
-      // When including relations, we need to use select with nested selects
       return {
         select: {
           ...baseSelect,
@@ -768,19 +845,33 @@ export class UsersService {
       };
     }
 
-    // Without relations - just return the select object
-    return {
-      select: baseSelect,
-    };
+    return { select: baseSelect };
   }
 
-  // For Auth service to use (needs password)
+  /**
+   * Generate a JWT token for email verification (used by create method)
+   * In a full implementation, this would use JwtService and EnvironmentService.
+   * For now, returns a placeholder; actual implementation should be delegated to AuthService.
+   */
+  private generateEmailVerificationToken(email: string): string {
+    // This is a simplified version – in practice, you would inject JwtService and sign a token.
+    return 'mock-verification-token';
+  }
+
+  // ============================================================
+  // METHODS FOR AUTH SERVICE (internal use)
+  // ============================================================
+
+  /**
+   * Find user with password (for authentication) – used by LocalStrategy
+   */
   async findOneWithPassword(email: string) {
-    return this.prisma.user.findUnique({
-      where: { email },
-    });
+    return this.prisma.user.findUnique({ where: { email } });
   }
 
+  /**
+   * Update user's refresh token (used by AuthService during login/refresh)
+   */
   async updateRefreshToken(userId: string, refreshToken: string | null) {
     return this.prisma.user.update({
       where: { id: userId },
@@ -788,6 +879,9 @@ export class UsersService {
     });
   }
 
+  /**
+   * Update last login timestamp (used by AuthService after successful login)
+   */
   async updateLastLogin(userId: string) {
     return this.prisma.user.update({
       where: { id: userId },

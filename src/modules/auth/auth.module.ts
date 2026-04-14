@@ -9,6 +9,7 @@ import { LocalStrategy } from './strategies/local.strategy';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { UsersModule } from '../users/users.module';
 import { EmailModule } from 'src/shared/email/email.module';
+import { CacheModule } from 'src/shared/cache/cache.module';
 
 @Module({
   imports: [
@@ -21,7 +22,8 @@ import { EmailModule } from 'src/shared/email/email.module';
       inject: [ConfigService],
     }),
     UsersModule,
-    EmailModule
+    EmailModule,
+    CacheModule,
   ],
   controllers: [AuthController],
   providers: [AuthService, PrismaService, LocalStrategy, JwtStrategy],

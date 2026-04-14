@@ -4,7 +4,7 @@ import { Queue } from 'bull';
 
 import { UserRole } from 'generated/prisma/client';
 import { Roles } from 'src/core/decorators/roles.decorator';
-import { JwtAuthGuard } from 'src/modules/auth/guards/jwt.guard';
+import { JwtAuthGuard } from 'src/modules/auth/guards/jwt-auth.guard';
 import { RolesGuard } from 'src/modules/auth/guards/roles.guard';
 import { QUEUE_NAMES } from 'src/core/constants/app.constants';
 

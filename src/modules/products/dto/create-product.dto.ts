@@ -8,7 +8,6 @@ import {
   IsBoolean,
   IsArray,
   ValidateNested,
-  IsUUID,
   IsUrl,
   MinLength,
   MaxLength,
@@ -41,7 +40,7 @@ class ProductImageDto {
   @IsOptional()
   isPrimary?: boolean;
 
-  @IsUUID()
+  @IsString()
   @IsOptional()
   colorId?: string; // link to color variant
 }
@@ -168,7 +167,7 @@ export class CreateProductDto {
   @IsOptional()
   barcode?: string;
 
-  @IsUUID()
+  @IsString()
   @IsOptional()
   categoryId?: string;
 

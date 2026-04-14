@@ -35,7 +35,6 @@ export class CreateCategoryDto {
   @IsOptional()
   icon?: string;
 
-  @IsUUID()
   @IsOptional()
   parentId?: string;
 

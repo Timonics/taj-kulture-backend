@@ -6,8 +6,16 @@ import {
 } from '@nestjs/common';
 import { validate } from 'class-validator';
 import { plainToInstance } from 'class-transformer';
-import { ERROR_CODES } from '../constants/error-codes.constants';
+import { ERROR_CODES } from '../constants/error-codes.constants'; 
 
+/**
+ * CUSTOM VALIDATION PIPE
+ *
+ * Enhanced validation pipe that formats errors with your error codes.
+ *
+ * NOTE: This REPLACES NestJS default ValidationPipe
+ * Register in main.ts: app.useGlobalPipes(new CustomValidationPipe())
+ */
 @Injectable()
 export class CustomValidationPipe implements PipeTransform<any> {
   async transform(value: any, { metatype }: ArgumentMetadata) {
@@ -19,12 +27,11 @@ export class CustomValidationPipe implements PipeTransform<any> {
     const errors = await validate(object);
 
     if (errors.length > 0) {
-      const messages = errors.map((error) => {
-        const constraints = error.constraints;
-        if (constraints) {
-          return Object.values(constraints).join(', ');
+      const messages = errors.flatMap((error) => {
+        if (error.constraints) {
+          return Object.values(error.constraints);
         }
-        return `${error.property} is invalid`;
+        return [`${error.property} is invalid`];
       });
 
       throw new BadRequestException({

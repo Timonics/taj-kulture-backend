@@ -1,11 +1,11 @@
 // User Events
 export const USER_EVENTS = {
   // Lifecycle
-  REGISTERED: 'user.registered', 
-  VERIFIED: 'user.verified', 
-  LOGGED_IN: 'user.logged_in', 
-  LOGGED_OUT: 'user.logged_out', 
-  DELETED: 'user.deleted', 
+  REGISTERED: 'user.registered',
+  VERIFIED: 'user.verified',
+  LOGGED_IN: 'user.logged_in',
+  LOGGED_OUT: 'user.logged_out',
+  DELETED: 'user.deleted',
 
   // Profile
   PROFILE_UPDATED: 'user.profile_updated',
@@ -23,6 +23,11 @@ export const USER_EVENTS = {
   // Social
   FOLLOWED: 'user.followed',
   UNFOLLOWED: 'user.unfollowed',
+
+  // Wishlist
+  WISHLIST_UPDATED: 'user.wishlist_updated',
+  WISHLIST_ADDED: 'user.wishlist_added',
+  WISHLIST_REMOVED: 'user.wishlist_removed',
 } as const;
 
 // Vendor Events
@@ -54,6 +59,7 @@ export const PRODUCT_EVENTS = {
   UPDATED: 'product.updated',
   DELETED: 'product.deleted',
   REVIEWED: 'product.reviewed',
+  VIEWED: 'product.viewed',
 } as const;
 
 // Collection Events

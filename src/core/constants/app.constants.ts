@@ -29,6 +29,11 @@ export const CACHE_KEYS = {
   COLLECTION: (idOrSlug: string) => `collection:${idOrSlug}`,
 
   USER_PROFILE: (id: string) => `user:${id}:profile`,
+  USER_LOGIN_ATTEMPTS: (email: string) => `login_attempts:${email}`,
+
+  //Cart
+  CART: (userId: string) => `cart:${userId}`,
+  ANONYMOUS_CART: (userId: string) => `anonymous_cart:${userId}`,
 };
 
 export const QUEUE_NAMES = {

@@ -1,24 +1,21 @@
-// src/shared/redis/redis.module.ts
-import { Module, Global } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config';
-import { redisClientFactory, REDIS_CLIENT } from './redis-client.provider';
+import { Global, Module } from '@nestjs/common';
+import { RedisConfigLoader } from './redis.config';
+import { redisClientFactory } from './redis-client.factory';
 import { RedisService } from './redis.service';
 
+/**
+ * REDIS MODULE
+ *
+ * Assembles all Redis components:
+ * - ConfigLoader for configuration
+ * - ClientFactory for connection management
+ * - RedisService for operations
+ *
+ * @Global() - Makes RedisService available everywhere
+ */
 @Global()
 @Module({
-  imports: [ConfigModule],
-  providers: [
-    redisClientFactory,
-    RedisService,
-    {
-      provide: 'REDIS_CONNECTION',
-      useExisting: REDIS_CLIENT,
-    },
-  ],
-  exports: [
-    RedisService,
-    REDIS_CLIENT,
-    'REDIS_CONNECTION',
-  ],
+  providers: [RedisConfigLoader, redisClientFactory, RedisService],
+  exports: [RedisService],
 })
 export class RedisModule {}
