@@ -1,98 +1,462 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+```markdown
+# Taj Kulture Backend API
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+[![Node.js](https://img.shields.io/badge/Node.js-18.x-green.svg)](https://nodejs.org/)
+[![NestJS](https://img.shields.io/badge/NestJS-10.x-red.svg)](https://nestjs.com/)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15-blue.svg)](https://www.postgresql.org/)
+[![Redis](https://img.shields.io/badge/Redis-7.x-red.svg)](https://redis.io/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.x-blue.svg)](https://www.typescriptlang.org/)
+[![Prisma](https://img.shields.io/badge/Prisma-5.x-2D3748.svg)](https://www.prisma.io/)
+[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+## 📌 Overview
 
-## Description
+**Taj Kulture** is a production‑ready, multi‑vendor e‑commerce platform for Nigerian streetwear and heritage fashion. The backend serves as the complete API for vendors, customers, and administrators, handling everything from authentication and product management to orders, payments, and real‑time notifications.
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+Built with **NestJS** (monolithic architecture), **PostgreSQL** (via Prisma ORM), **Redis** (caching & queues), and **Bull** (background jobs). The system follows Domain‑Driven Design, event‑driven patterns, and strict security practices (HttpOnly cookies, refresh token rotation, rate limiting).
 
-## Project setup
+---
 
-```bash
-$ npm install
+## 🚀 Key Features
+
+### 👤 Authentication & Authorization
+- JWT access/refresh tokens stored as **HttpOnly cookies** (XSS‑safe)
+- Refresh token rotation with one‑time use
+- Email verification (SendGrid)
+- Password reset flow
+- Google OAuth 2.0 (optional)
+- Role‑based access control (`CUSTOMER`, `VENDOR`, `ADMIN`, `MODERATOR`)
+
+### 🛍️ Multi‑Vendor Marketplace
+- Vendor application & approval workflow
+- Vendor profiles with custom slugs, logos, banners, social links
+- Vendor verification badges (Verified, Featured, Artisan)
+- Follow/unfollow vendors
+- Vendor analytics (sales, product performance)
+
+### 📦 Product Management
+- Full CRUD for vendors (images, variants, stock)
+- Product variants (colors, sizes, materials)
+- Bulk image upload (AWS S3)
+- Stock validation & reservation
+- Product statuses: `DRAFT`, `PUBLISHED`, `ARCHIVED`, `OUT_OF_STOCK`
+- Featured products & collections
+
+### 🛒 Cart & Order Flow
+- Persistent shopping cart (database + Redis cache)
+- Merge anonymous cart on login
+- Variant selection & stock validation
+- Order creation with atomic stock deduction
+- Order status tracking: `PENDING` → `PROCESSING` → `SHIPPED` → `DELIVERED`
+- Payment integration with **Paystack** (webhooks, verification)
+
+### 💳 Payments
+- Paystack payment gateway
+- Webhook signature verification
+- Idempotent order status updates
+
+### ⭐ Reviews & Ratings
+- Verified purchase badge
+- Admin moderation queue
+- Helpful votes (upvote/downvote)
+- Vendor & product ratings aggregation
+
+### 📊 Analytics & Search
+- PostgreSQL full‑text search with ranking
+- Search term analytics
+- Product view tracking (for recommendations)
+- Vendor sales dashboard
+
+### 🔔 Event‑Driven & Background Jobs
+- **EventBus** with type‑safe event map
+- Bull queues for emails, notifications, analytics
+- Dead‑letter queue for failed jobs
+- Admin queue monitoring UI
+
+### 🔒 Security
+- HttpOnly cookies + SameSite=Lax
+- Rate limiting (global & per‑login)
+- Helmet security headers
+- CORS whitelist
+- Input validation (class‑validator)
+- Prisma SQL injection protection
+
+---
+
+## 🧱 Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                     Nginx / CloudFront                      │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│                   NestJS Application (API)                  │
+├───────────────┬───────────────┬───────────────┬────────────┤
+│   Controllers │   Services    │   Guards      │ Interceptors│
+└───────────────┴───────────────┴───────────────┴────────────┘
+                              │
+        ┌─────────────────────┼─────────────────────┐
+        ▼                     ▼                     ▼
+┌───────────────┐    ┌───────────────┐    ┌───────────────┐
+│   PostgreSQL  │    │     Redis     │    │    AWS S3     │
+│   (Prisma)    │    │ (Cache/Queues)│    │   (Images)    │
+└───────────────┘    └───────────────┘    └───────────────┘
 ```
 
-## Compile and run the project
+### Core Modules
 
-```bash
-# development
-$ npm run start
+| Module        | Responsibility                                         |
+|---------------|--------------------------------------------------------|
+| `Auth`        | Registration, login, token management, OAuth          |
+| `Users`       | Profile, addresses, follow/unfollow                   |
+| `Vendors`     | Application, approval, verification, vendor dashboard |
+| `Products`    | CRUD, variants, stock, images                         |
+| `Categories`  | Hierarchical product/vendor categories                |
+| `Collections` | Curated product groups (admin or vendor owned)        |
+| `Cart`        | Shopping cart with variants and price snapshots       |
+| `Orders`      | Order creation, status management, stock deduction    |
+| `Payments`    | Paystack integration, webhooks                        |
+| `Reviews`     | Product/vendor reviews, moderation, helpful votes     |
+| `Wishlist`    | Save products for later, move to cart                 |
+| `Search`      | Full‑text search with filtering & ranking             |
+| `Admin`       | Vendor approval, review moderation, analytics         |
 
-# watch mode
-$ npm run start:dev
+### Shared Infrastructure
 
-# production mode
-$ npm run start:prod
+- **`ConfigModule`** – Type‑safe environment variables (class‑validator + singleton)
+- **`LoggerModule`** – Winston + correlation IDs (AsyncLocalStorage) + log rotation
+- **`CacheModule`** – Redis caching with tag‑based invalidation
+- **`QueueModule`** – Bull queues (email, notification, analytics, dead‑letter)
+- **`EventModule`** – Type‑safe event bus (`EventEmitter2`)
+- **`EmailModule`** – SendGrid + Handlebars templates + fallback HTML
+- **`UploadModule`** – AWS S3 file upload (images, logos)
+- **`DatabaseModule`** – Prisma service (with PrismaPg adapter)
+- **`RedisModule`** – ioredis client with mock support
+
+---
+
+## 🛠️ Tech Stack
+
+| Category          | Technology                                                   |
+|-------------------|--------------------------------------------------------------|
+| Runtime           | Node.js 18+                                                  |
+| Framework         | NestJS 10.x                                                  |
+| Language          | TypeScript 5.x                                               |
+| ORM               | Prisma 5.x (with PrismaPg adapter)                          |
+| Database          | PostgreSQL 15                                                |
+| Cache & Queues    | Redis 7.x + BullMQ                                           |
+| Authentication    | JWT (Passport), Google OAuth 2.0                            |
+| Email             | SendGrid + Handlebars                                        |
+| File Storage      | AWS S3                                                       |
+| Payment Gateway   | Paystack                                                     |
+| Validation        | class-validator + class-transformer                         |
+| Logging           | Winston + DailyRotateFile                                    |
+| Testing           | Jest + Supertest                                             |
+| Containerization  | Docker / Docker Compose                                      |
+
+---
+
+## 📁 Project Structure
+
+```
+src/
+├── config/                     # Environment configuration
+│   ├── env/
+│   │   ├── env.service.ts      # Singleton environment service
+│   │   └── env.validation.ts   # Zod/class-validator schema
+│   └── config.module.ts
+├── core/                       # Cross‑cutting concerns
+│   ├── constants/              # Error codes, cache keys, queue names
+│   ├── decorators/             # @Public(), @Roles(), @CurrentUser()
+│   ├── exceptions/             # Domain exceptions & error codes
+│   ├── filters/                # Global exception filter
+│   ├── guards/                 # JWT, roles, throttler
+│   ├── interceptors/           # Transform, serialize, cache, timeout
+│   ├── middleware/             # Correlation ID, request context, helmet
+│   ├── pipes/                  # Validation, parse UUID
+│   └── context/                # AsyncLocalStorage request context
+├── modules/                    # Business modules
+│   ├── auth/
+│   ├── users/
+│   ├── vendors/
+│   ├── products/
+│   ├── categories/
+│   ├── collections/
+│   ├── cart/
+│   ├── orders/
+│   ├── payments/
+│   ├── reviews/
+│   ├── wishlist/
+│   ├── search/
+│   └── admin/
+├── shared/                     # Reusable infrastructure
+│   ├── database/               # Prisma service
+│   ├── cache/                  # Redis + memory cache
+│   ├── queue/                  # Bull queues & processors
+│   ├── events/                 # EventBus & handlers
+│   ├── email/                  # SendGrid service
+│   ├── upload/                 # S3 upload
+│   ├── redis/                  # Redis client
+│   └── logger/                 # Winston logger
+└── main.ts
 ```
 
-## Run tests
+---
 
-```bash
-# unit tests
-$ npm run test
+## 🔧 Installation & Setup
 
-# e2e tests
-$ npm run test:e2e
+### Prerequisites
 
-# test coverage
-$ npm run test:cov
+- Node.js 18+
+- PostgreSQL 15+
+- Redis 7+
+- AWS account (for S3, optional)
+- SendGrid account (optional)
+
+### Environment Variables
+
+Create a `.env` file in the root (see `.env.example`):
+
+```env
+# Core
+NODE_ENV=development
+PORT=3000
+DATABASE_URL=postgresql://user:password@localhost:5432/taj_kulture
+
+# JWT
+JWT_SECRET=your-super-secret-min-32-chars
+JWT_EXPIRES_IN=15m
+JWT_REFRESH_SECRET=refresh-secret-min-32-chars
+JWT_REFRESH_EXPIRES_IN=30d
+
+# Redis
+REDIS_ENABLED=true
+REDIS_URL=redis://localhost:6379
+REDIS_DB=0
+
+# SendGrid
+SENDGRID_API_KEY=your-api-key
+SENDGRID_FROM_EMAIL=noreply@tajkulture.com
+SENDGRID_FROM_NAME="Taj Kulture"
+
+# AWS S3
+AWS_ACCESS_KEY_ID=your-key
+AWS_SECRET_ACCESS_KEY=your-secret
+AWS_REGION=us-east-1
+AWS_S3_BUCKET=taj-kulture-assets
+
+# Frontend URL (for email links)
+FRONTEND_URL=http://localhost:3001
+
+# Rate Limiting
+THROTTLE_TTL=60
+THROTTLE_LIMIT=100
+
+# Bcrypt
+BCRYPT_ROUNDS=10
 ```
 
-## Deployment
-
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
-
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
+### Install Dependencies
 
 ```bash
-$ npm install -g @nestjs/mau
-$ mau deploy
+npm install
 ```
 
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
+### Database Setup
 
-## Resources
+```bash
+# Run migrations
+npx prisma migrate dev
 
-Check out a few resources that may come in handy when working with NestJS:
+# Seed database (optional)
+npm run seed
+```
 
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
+### Start Development Server
 
-## Support
+```bash
+npm run start:dev
+```
 
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
+### Run Tests
 
-## Stay in touch
+```bash
+# Unit tests
+npm run test
 
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
+# E2E tests
+npm run test:e2e
 
-## License
+# Coverage
+npm run test:cov
+```
 
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+### Docker Compose (Full Stack)
+
+```bash
+docker-compose up -d
+```
+
+---
+
+## 📡 API Documentation
+
+All endpoints follow a standard response format:
+
+```json
+{
+  "success": true,
+  "data": { ... },
+  "meta": {
+    "timestamp": "2025-04-14T12:00:00Z",
+    "path": "/api/products",
+    "page": 1,
+    "total": 100
+  }
+}
+```
+
+### Authentication
+
+| Method | Endpoint                     | Description                 |
+|--------|------------------------------|-----------------------------|
+| POST   | `/api/auth/register`         | Create new account          |
+| POST   | `/api/auth/login`            | Login (sets HttpOnly cookies)|
+| POST   | `/api/auth/logout`           | Logout (clears cookies)     |
+| POST   | `/api/auth/refresh`          | Refresh access token        |
+| GET    | `/api/auth/verify-email`     | Verify email address        |
+| POST   | `/api/auth/forgot-password`  | Request password reset      |
+| POST   | `/api/auth/reset-password`   | Reset password with token   |
+
+### Users
+
+| Method | Endpoint                     | Description                 |
+|--------|------------------------------|-----------------------------|
+| GET    | `/api/users/me`              | Get current user profile    |
+| PATCH  | `/api/users/me`              | Update profile              |
+| GET    | `/api/users/me/addresses`    | List user addresses         |
+| POST   | `/api/users/me/addresses`    | Add address                 |
+| GET    | `/api/users/profile/:username`| Public profile              |
+
+### Vendors
+
+| Method | Endpoint                     | Description                 |
+|--------|------------------------------|-----------------------------|
+| POST   | `/api/vendors/apply`         | Apply to become a vendor    |
+| GET    | `/api/vendors`               | List vendors (public)       |
+| GET    | `/api/vendors/:slug`         | Vendor public profile       |
+| GET    | `/api/vendors/me/profile`    | My vendor profile           |
+| PATCH  | `/api/vendors/me/profile`    | Update my vendor            |
+| POST   | `/api/vendors/:vendorId/follow` | Follow a vendor           |
+
+### Products
+
+| Method | Endpoint                     | Description                 |
+|--------|------------------------------|-----------------------------|
+| POST   | `/api/products`              | Create product (vendor only)|
+| GET    | `/api/products`              | List published products     |
+| GET    | `/api/products/my-products`  | My products (vendor)        |
+| GET    | `/api/products/:slug`        | Get product details         |
+| PATCH  | `/api/products/:id`          | Update product              |
+| DELETE | `/api/products/:id`          | Delete product              |
+
+### Orders & Payments
+
+| Method | Endpoint                     | Description                 |
+|--------|------------------------------|-----------------------------|
+| POST   | `/api/orders`                | Create order from cart      |
+| GET    | `/api/orders`                | My orders                   |
+| GET    | `/api/orders/:id`            | Order details               |
+| POST   | `/api/orders/:id/cancel`     | Cancel order                |
+| POST   | `/api/payments/initialize`   | Initialize Paystack payment |
+| POST   | `/api/payments/webhook`      | Paystack webhook            |
+
+*(Full Postman collection available in `/docs`)*
+
+---
+
+## 🧪 Testing Strategy
+
+- **Unit Tests** – Jest, isolated services with mocks (coverage > 80%)
+- **Integration Tests** – Real database (test database), Redis mock
+- **E2E Tests** – Supertest, full API flows (auth, cart → order → payment)
+- **Factories** – Test data factories for all entities
+
+```bash
+npm run test:cov
+```
+
+---
+
+## 🚢 Deployment
+
+### Production Build
+
+```bash
+npm run build
+npm run start:prod
+```
+
+### Using PM2
+
+```bash
+pm2 start dist/main.js --name taj-kulture-api
+```
+
+### Environment‑Specific Configuration
+
+Use `.env.production`, `.env.staging`, etc. The app loads based on `NODE_ENV`.
+
+### Health Check
+
+```
+GET /health
+```
+
+Returns `{ status: 'ok', uptime: 123, redis: 'up', db: 'up' }`
+
+---
+
+## 📈 Monitoring & Logging
+
+- **Winston** logs to rotating JSON files (`/logs/`)
+- Correlation IDs track requests across logs
+- **Bull Board** for queue monitoring (admin only)
+
+---
+
+## 🤝 Contributing
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing`)
+3. Commit changes (`git commit -m 'Add amazing feature'`)
+4. Push to branch (`git push origin feature/amazing`)
+5. Open a Pull Request
+
+---
+
+## 📄 License
+
+MIT © Oderinde Michael
+
+---
+
+## 🙏 Acknowledgments
+
+- NestJS team for the amazing framework
+- Prisma for the type‑safe ORM
+- BullMQ for robust job queues
+- The entire open‑source community
+
+---
+
+## 📬 Contact
+
+For questions or opportunities, reach out via [LinkedIn](https://linkedin.com/in/oderinde-michael) or [Email](mailto:Olubiyioderinde7@gmail.com).
+
+---
+
+**Built with ❤️ for African fashion and culture.**
+```
